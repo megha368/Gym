@@ -8,7 +8,7 @@ def add_class_type(conn, name, description=None): # default to no description
 
 # Add a brand new instructor to the instructors table in the database 
 def add_instructor(conn, name):
-    cur = conn.execute("INSERT INTO instructors (name) VALUES (?)", (name))
+    cur = conn.execute("INSERT INTO instructors (name) VALUES (?)", (name,))
     conn.commit() 
     return cur.lastrowid 
 
