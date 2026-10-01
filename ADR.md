@@ -36,3 +36,20 @@ I considered using separate databases for each domain, but rejected this because
 
 Consequences: 
 Everything is in one database, making things easier to pinpoint and access. 
+
+
+
+
+3. Data model: how Bookings relates to Scheduling in SQLite
+
+Date: 2026-10-01
+
+Status: Decided
+
+Context: Bookings must refer to the sessions they reserve, but the 'Scheduling' and 'Members & Bookings' domains need to stay independently separable in case Scheduling later becomes its own service with its own database. Both domains store their tables in one SQLite file.
+
+Decision: Scheduling owns class_types, instructors and sessions; Bookings owns members, passes, bookings, waitlist_entries and audit_log. bookings.session_id and waitlist_entries.session_id are plain integers with no foreign key, and the booking service validates them by calling Scheduling's service.
+
+Alternatives considered: A real foreign key from bookings.session_id to sessions.id was rejected because the database would then link the two domains' tables, and that constraint would have to be dropped if Scheduling later became its own service. Also, separate SQLite files per domain, rejected because the assignment requires one documented database path and it would add complexity without benefit.
+
+Consequences: The database can no longer reject a booking for a nonexistent session, so the booking service must check it and tests must cover that. In exchange, Scheduling could later be moved out without changing any Bookings table. 

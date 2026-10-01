@@ -42,9 +42,66 @@ def create_scheduling_tables(conn):
     conn.commit()
 
 
+def create_booking_tables(conn):
+    """Tables owned by the Members & Bookings domain."""
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS members (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            name          TEXT NOT NULL,
+            email         TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS passes (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id      INTEGER NOT NULL REFERENCES members(id),
+            type           TEXT NOT NULL
+                           CHECK (type IN ('drop_in', 'class_pack', 'membership')),
+            remaining_uses INTEGER
+                           CHECK (remaining_uses IS NULL OR remaining_uses >= 0),
+            expires_at     TEXT,
+            created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        -- session_id is deliberately NOT a foreign key (see ADR-3)
+        CREATE TABLE IF NOT EXISTS bookings (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id  INTEGER NOT NULL REFERENCES members(id),
+            session_id INTEGER NOT NULL,
+            pass_id    INTEGER NOT NULL REFERENCES passes(id),
+            status     TEXT NOT NULL DEFAULT 'confirmed'
+                       CHECK (status IN ('confirmed', 'cancelled')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS one_confirmed_booking_per_session
+            ON bookings (member_id, session_id) WHERE status = 'confirmed';
+
+        CREATE TABLE IF NOT EXISTS waitlist_entries (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id  INTEGER NOT NULL REFERENCES members(id),
+            session_id INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (member_id, session_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            member_id  INTEGER NOT NULL REFERENCES members(id),
+            action     TEXT NOT NULL,
+            session_id INTEGER NOT NULL,
+            details    TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+    """)
+    conn.commit()
+
+
 def init_db(db_path=None):
     """Create every table the app needs. Safe to run on every startup."""
     conn = get_connection(db_path)
     create_scheduling_tables(conn)
+    create_booking_tables(conn) 
     # Day 3: create_booking_tables(conn) goes here
     conn.close()
