@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime, timedelta
 
-from bookings import repository, strategies
+from bookings import events, repository, strategies
 from scheduling import service as scheduling_service
 from scheduling.service import SchedulingError
 
@@ -142,7 +142,7 @@ def book_or_join_waitlist(conn, member_id, session_id, now=None):
         return {"status": "waitlisted", "position": position}
 
 
-def cancel_booking(conn, member_id, booking_id, now=None):
+def cancel_booking(conn, member_id, booking_id, now=None, bus=None):
     """Free cancellation any time before the session starts (rule 6)."""
     now = now or datetime.now()
 
@@ -169,12 +169,70 @@ def cancel_booking(conn, member_id, booking_id, now=None):
         conn.rollback()
         raise
 
-    # TO DO: this is where the "booking cancelled" event will be published
+    # The cancellation is saved. Now announce it; whoever subscribed reacts.
+    event = events.BookingCancelled(
+        booking_id=booking_id, member_id=member_id, session_id=booking["session_id"]
+    )
+    bus = bus if bus is not None else events.default_bus
+    bus.publish(event, conn, now)
+
     return {
         "booking_id": booking_id,
         "member_id": member_id,
         "session_id": booking["session_id"],
     }
+
+def promote_next_from_waitlist(conn, session_id, now=None):
+    """Give a free spot to the first waitlisted member who can take it.
+
+    Returns {"member_id", "booking_id", "session_id"}, or None if nobody was promoted.
+    """
+    now = now or datetime.now()
+
+    try:
+        session = _get_open_session(conn, session_id, now)
+    except BookingError:
+        return None  # session was cancelled by the studio, already started, or is gone
+    if repository.count_confirmed_bookings(conn, session_id) >= session["capacity"]:
+        return None  # no free spot
+
+    while True:
+        entry = repository.get_first_waitlist_entry(conn, session_id)
+        if entry is None:
+            return None
+        member_id = entry["member_id"]
+
+        already_booked = repository.get_confirmed_booking(conn, member_id, session_id)
+        pass_row = None if already_booked else find_usable_pass(conn, member_id, now)
+        if already_booked or pass_row is None:
+            # Can't be promoted: take them off the list and try the next person
+            repository.remove_waitlist_entry(conn, entry["id"])
+            conn.commit()
+            continue
+
+        strategy = strategies.get_strategy(pass_row["type"])
+        try:
+            # Three changes that must succeed together
+            repository.remove_waitlist_entry(conn, entry["id"])
+            repository.set_pass_remaining(
+                conn, pass_row["id"], strategy.remaining_after_use(pass_row)
+            )
+            booking_id = repository.add_booking(
+                conn, member_id, session_id, pass_row["id"]
+            )
+            conn.commit()
+        except sqlite3.Error:
+            conn.rollback()
+            raise
+        return {"member_id": member_id, "booking_id": booking_id, "session_id": session_id}
+
+
+def _on_booking_cancelled(event, conn, now):
+    """Observer: when a booking is cancelled, offer its spot to the waitlist."""
+    promote_next_from_waitlist(conn, event.session_id, now=now)
+
+
+events.default_bus.subscribe(events.BookingCancelled, _on_booking_cancelled)
 
 
 # helper function to see if the session exists and is still open 

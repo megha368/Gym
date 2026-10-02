@@ -115,3 +115,10 @@ def get_booking(conn, booking_id):
 def set_booking_status(conn, booking_id, status):
     """Does not commit: the service commits together with the pass refund."""
     conn.execute("UPDATE bookings SET status = ? WHERE id = ?", (status, booking_id))
+
+def get_first_waitlist_entry(conn, session_id):
+    """The member who has been waiting longest for this session, or None."""
+    return conn.execute(
+        "SELECT * FROM waitlist_entries WHERE session_id = ? ORDER BY id LIMIT 1",
+        (session_id,),
+    ).fetchone()
