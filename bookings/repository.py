@@ -76,3 +76,42 @@ def list_confirmed_bookings_for_member(conn, member_id):
         "ORDER BY created_at",
         (member_id,),
     ).fetchall()
+
+def add_waitlist_entry(conn, member_id, session_id):
+    """Does not commit: the service commits."""
+    cur = conn.execute(
+        "INSERT INTO waitlist_entries (member_id, session_id) VALUES (?, ?)",
+        (member_id, session_id),
+    )
+    return cur.lastrowid
+
+
+def get_waitlist_entry(conn, member_id, session_id):
+    return conn.execute(
+        "SELECT * FROM waitlist_entries WHERE member_id = ? AND session_id = ?",
+        (member_id, session_id),
+    ).fetchone()
+
+
+def remove_waitlist_entry(conn, entry_id):
+    """Does not commit: the service commits."""
+    conn.execute("DELETE FROM waitlist_entries WHERE id = ?", (entry_id,))
+
+
+def count_waitlist_up_to(conn, session_id, entry_id):
+    """How many entries for this session are at or before entry_id (= position) (what's the user's position on the waitlist)."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM waitlist_entries WHERE session_id = ? AND id <= ?",
+        (session_id, entry_id),
+    ).fetchone()[0]
+
+
+def get_booking(conn, booking_id):
+    return conn.execute(
+        "SELECT * FROM bookings WHERE id = ?", (booking_id,)
+    ).fetchone()
+
+
+def set_booking_status(conn, booking_id, status):
+    """Does not commit: the service commits together with the pass refund."""
+    conn.execute("UPDATE bookings SET status = ? WHERE id = ?", (status, booking_id))
