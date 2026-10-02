@@ -53,3 +53,18 @@ Decision: Scheduling owns class_types, instructors and sessions; Bookings owns m
 Alternatives considered: A real foreign key from bookings.session_id to sessions.id was rejected because the database would then link the two domains' tables, and that constraint would have to be dropped if Scheduling later became its own service. Also, separate SQLite files per domain, rejected because the assignment requires one documented database path and it would add complexity without benefit.
 
 Consequences: The database can no longer reject a booking for a nonexistent session, so the booking service must check it and tests must cover that. In exchange, Scheduling could later be moved out without changing any Bookings table. 
+
+
+5. One thing you deliberately chose not to build, and why. 
+
+Date: 2026-10-02
+
+Status: Decided
+
+Context: When a waitlisted member is promoted, they only find out by checking their bookings page. Telling them proactively would need email or SMS.
+
+Decision: I didn't build notifications. Promotions are recorded in the audit log and appear on the member's bookings page.
+
+Alternatives considered: Sending an email on promotion. I rejected it because it needs an external mail service, which the deployment contract discourages and is overly-complicated to implement. An in-app notifications table was also rejected, because it adds a table and UI without teaching anything new about the architecture
+
+Consequences: A promoted member only finds out by checking their bookings page, and the promotion shows up in the audit log, so the app is less convenient for them. 

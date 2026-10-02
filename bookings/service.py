@@ -174,12 +174,14 @@ def cancel_booking(conn, member_id, booking_id, now=None, bus=None):
         booking_id=booking_id, member_id=member_id, session_id=booking["session_id"]
     )
     bus = bus if bus is not None else events.default_bus
-    bus.publish(event, conn, now)
+    results = bus.publish(event, conn, now)
+    promoted = next((r for r in results if r), None)  # who got the freed spot, if anyone
 
     return {
         "booking_id": booking_id,
         "member_id": member_id,
         "session_id": booking["session_id"],
+        "promoted": promoted,
     }
 
 def promote_next_from_waitlist(conn, session_id, now=None):
@@ -229,7 +231,7 @@ def promote_next_from_waitlist(conn, session_id, now=None):
 
 def _on_booking_cancelled(event, conn, now):
     """Observer: when a booking is cancelled, offer its spot to the waitlist."""
-    promote_next_from_waitlist(conn, event.session_id, now=now)
+    return promote_next_from_waitlist(conn, event.session_id, now=now)
 
 
 events.default_bus.subscribe(events.BookingCancelled, _on_booking_cancelled)

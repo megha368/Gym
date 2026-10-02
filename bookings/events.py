@@ -19,8 +19,10 @@ class EventBus:
         self._subscribers.setdefault(event_type, []).append(handler)
 
     def publish(self, event, conn, now):
+        results = []
         for handler in self._subscribers.get(type(event), []):
-            handler(event, conn, now)
+            results.append(handler(event, conn, now))
+        return results
 
 
 # The bus the app uses. Tests can pass their own EventBus() instead.

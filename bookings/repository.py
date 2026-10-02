@@ -116,9 +116,27 @@ def set_booking_status(conn, booking_id, status):
     """Does not commit: the service commits together with the pass refund."""
     conn.execute("UPDATE bookings SET status = ? WHERE id = ?", (status, booking_id))
 
+
 def get_first_waitlist_entry(conn, session_id):
     """The member who has been waiting longest for this session, or None."""
     return conn.execute(
         "SELECT * FROM waitlist_entries WHERE session_id = ? ORDER BY id LIMIT 1",
         (session_id,),
     ).fetchone()
+
+
+def add_audit_entry(conn, member_id, action, session_id, details=None):
+    """Does not commit: run_command commits after writing all entries."""
+    conn.execute(
+        "INSERT INTO audit_log (member_id, action, session_id, details) "
+        "VALUES (?, ?, ?, ?)",
+        (member_id, action, session_id, details),
+    )
+
+
+def list_audit_entries(conn, member_id=None):
+    if member_id is None:
+        return conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()
+    return conn.execute(
+        "SELECT * FROM audit_log WHERE member_id = ? ORDER BY id", (member_id,)
+    ).fetchall()
