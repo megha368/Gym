@@ -71,3 +71,11 @@ def cancel_session(conn, session_id):
     if session["status"] == "cancelled":
         raise SchedulingError("Session is already cancelled")
     repository.set_session_status(conn, session_id, "cancelled")
+
+    
+def get_session_details(conn, session_id):
+    """Like get_session_info, but with the class and instructor names filled in."""
+    row = repository.get_session_with_names(conn, session_id)
+    if row is None:
+        raise SchedulingError("Session does not exist")
+    return dict(row)

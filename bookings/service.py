@@ -82,18 +82,78 @@ def book_class(conn, member_id, session_id, now=None):
     return booking_id
 
 
-def list_member_bookings(conn, member_id):
-    """A member's confirmed bookings, with session details from Scheduling."""
+def list_member_bookings(conn, member_id, now=None):
+    """A member's confirmed bookings with session details from Scheduling, soonest first."""
+    now = now or datetime.now()
     result = []
     for booking in repository.list_confirmed_bookings_for_member(conn, member_id):
-        info = scheduling_service.get_session_info(conn, booking["session_id"])
+        info = scheduling_service.get_session_details(conn, booking["session_id"])
         result.append({
             "booking_id": booking["id"],
             "session_id": booking["session_id"],
+            "class_name": info["class_name"],
+            "instructor_name": info["instructor_name"],
             "start_time": info["start_time"],
             "session_status": info["status"],
+            "can_cancel": info["start_time"] > now.isoformat(timespec="seconds"),
         })
+    result.sort(key=lambda b: b["start_time"])
     return result
+
+
+def list_member_waitlist(conn, member_id):
+    """The sessions a member is waiting for, with their position in line."""
+    result = []
+    for entry in repository.list_waitlist_entries_for_member(conn, member_id):
+        info = scheduling_service.get_session_details(conn, entry["session_id"])
+        result.append({
+            "session_id": entry["session_id"],
+            "class_name": info["class_name"],
+            "instructor_name": info["instructor_name"],
+            "start_time": info["start_time"],
+            "position": get_waitlist_position(conn, member_id, entry["session_id"]),
+        })
+    result.sort(key=lambda w: w["start_time"])
+    return result
+
+
+def list_member_passes(conn, member_id, now=None):
+    """A member's passes, each marked valid or not by its strategy."""
+    now = now or datetime.now()
+    result = []
+    for row in repository.list_passes_for_member(conn, member_id):
+        pass_row = dict(row)
+        pass_row["is_valid"] = strategies.get_strategy(pass_row["type"]).is_valid(
+            pass_row, now
+        )
+        result.append(pass_row)
+    return result
+
+
+def get_schedule(conn, member_id=None, now=None):
+    """Upcoming sessions with spots left, plus this member's status in each.
+
+    member_id=None means a visitor who is not logged in.
+    """
+    now = now or datetime.now()
+    schedule = []
+    for session in scheduling_service.list_upcoming_sessions(conn, now=now):
+        item = dict(session)
+        taken = repository.count_confirmed_bookings(conn, session["id"])
+        item["spots_left"] = max(session["capacity"] - taken, 0)
+        item["member_status"] = None  # None, "booked" or "waitlisted"
+        item["waitlist_position"] = None
+        if member_id is not None:
+            if repository.get_confirmed_booking(conn, member_id, session["id"]):
+                item["member_status"] = "booked"
+            else:
+                position = get_waitlist_position(conn, member_id, session["id"])
+                if position is not None:
+                    item["member_status"] = "waitlisted"
+                    item["waitlist_position"] = position
+        schedule.append(item)
+    return schedule
+
 
 def get_waitlist_position(conn, member_id, session_id):
     """1 = first in line, or None if the member is not on the waitlist."""

@@ -140,3 +140,10 @@ def list_audit_entries(conn, member_id=None):
     return conn.execute(
         "SELECT * FROM audit_log WHERE member_id = ? ORDER BY id", (member_id,)
     ).fetchall()
+
+
+def list_waitlist_entries_for_member(conn, member_id):
+    return conn.execute(
+        "SELECT * FROM waitlist_entries WHERE member_id = ? ORDER BY id",
+        (member_id,),
+    ).fetchall()

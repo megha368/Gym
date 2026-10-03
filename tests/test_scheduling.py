@@ -105,3 +105,16 @@ def test_is_open_for_booking(conn, ids):
     assert service.is_open_for_booking(conn, future, now=NOW) is True
     assert service.is_open_for_booking(conn, past, now=NOW) is False
     assert service.is_open_for_booking(conn, cancelled, now=NOW) is False
+
+
+def test_get_session_details_includes_names(conn, ids):
+    session_id = make_session(conn, ids)
+    details = service.get_session_details(conn, session_id)
+    assert details["class_name"] == "Yoga"
+    assert details["instructor_name"] == "Sarah"
+    assert details["capacity"] == 10
+
+
+def test_get_session_details_unknown_session_rejected(conn):
+    with pytest.raises(SchedulingError):
+        service.get_session_details(conn, 999)
