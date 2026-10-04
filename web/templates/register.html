@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Create account{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Create your account</h1>
+  <form method="post">
+    <label>Name
+      <input name="name" value="{{ form.get('name', '') }}" required autocomplete="name">
+    </label>
+    <label>Email
+      <input type="email" name="email" value="{{ form.get('email', '') }}" required autocomplete="email">
+    </label>
+    <label>Password
+      <input type="password" name="password" minlength="8" required autocomplete="new-password">
+      <small>At least 8 characters</small>
+    </label>
+    <button class="btn">Create account</button>
+  </form>
+  <p class="muted">Already a member? <a href="{{ url_for('web.login') }}">Log in</a></p>
+</section>
+{% endblock %}

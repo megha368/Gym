@@ -55,6 +55,25 @@ Alternatives considered: A real foreign key from bookings.session_id to sessions
 Consequences: The database can no longer reject a booking for a nonexistent session, so the booking service must check it and tests must cover that. In exchange, Scheduling could later be moved out without changing any Bookings table. 
 
 
+
+
+4. Your testing approach
+
+Date: 2026-10-04
+
+Status: Decided
+
+Context: The assignment requires at least 70% coverage of core business logic, not framework glue. My rules (capacity, passes, waitlist promotion) depend on SQLite constraints and on the current time.
+
+Decision: I test the service layers of both domains directly with pytest, using a fresh in-memory SQLite database per test (get_connection(":memory:") makes a throwaway database in RAM that vanishes after the test, so tests can't affect each other) and a `now` parameter instead of the real clock, and I measure coverage only on the `scheduling` and `bookings` packages (currently 97%). Routes get a small set of end-to-end tests through Flask's test client, and templates and CSS are only checked by hand.
+
+Alternatives considered: Testing everything through HTTP routes, rejected because it is slower and mostly tests framework glue instead of rules. 
+
+Consequences: The whole suite runs in a few seconds and protects every booking rule, including the Observer and Command behaviour. The cost is that template wording and page layout could break without a test noticing, and the rollback branches for unexpected database errors are untested.
+
+
+
+
 5. One thing you deliberately chose not to build, and why. 
 
 Date: 2026-10-02

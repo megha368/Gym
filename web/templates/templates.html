@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Welcome back</h1>
+  <form method="post">
+    <label>Email
+      <input type="email" name="email" value="{{ form.get('email', '') }}" required autocomplete="email">
+    </label>
+    <label>Password
+      <input type="password" name="password" required autocomplete="current-password">
+    </label>
+    <button class="btn">Log in</button>
+  </form>
+  <p class="muted">New here? <a href="{{ url_for('web.register') }}">Create an account</a></p>
+</section>
+{% endblock %} 

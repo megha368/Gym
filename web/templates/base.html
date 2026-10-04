@@ -1,0 +1,36 @@
+<!-- every page extends this one -->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Classes{% endblock %} · Flow Studio</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="{{ url_for('web.schedule') }}">Flow Studio</a>
+    <nav>
+      <a href="{{ url_for('web.schedule') }}">Schedule</a>
+      {% if g.member %}
+        <a href="{{ url_for('web.my_bookings') }}">My bookings</a>
+        <form method="post" action="{{ url_for('web.logout') }}" class="inline">
+          <button class="link-button">Log out ({{ g.member["name"] }})</button>
+        </form>
+      {% else %}
+        <a href="{{ url_for('web.login') }}">Log in</a>
+        <a class="btn small" href="{{ url_for('web.register') }}">Join</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

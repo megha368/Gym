@@ -1,15 +1,10 @@
-from flask import Flask 
-from config.settings import PORT 
-from database.database import init_db
+from config.settings import PORT
+from web import create_app
 
-app = Flask(__name__) # var app is now the website
-
-@app.route("/health")
-def health():
-    return {"status": "ok"} # if server replies with status: ok, the system knows the app is healthy 
+app = create_app()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT) # host = 0.0.0.0 means we accept visitors from any computer
 
-init_db()
+
 

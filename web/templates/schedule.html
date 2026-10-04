@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Schedule{% endblock %}
+{% block content %}
+<h1>This week's classes</h1>
+{% if not days %}
+  <p class="muted">No upcoming classes yet.</p>
+{% endif %}
+{% for day, sessions in days %}
+  <h2 class="day">{{ day | pretty_day }}</h2>
+  <ul class="sessions">
+    {% for s in sessions %}
+    <li class="session">
+      <div class="time">{{ s.start_time | clock }}</div>
+      <div class="info">
+        <strong>{{ s.class_name }}</strong>
+        <span class="muted">with {{ s.instructor_name }}</span>
+      </div>
+      <div>
+        {% if s.spots_left == 0 %}
+          <span class="pill full">Full</span>
+        {% else %}
+          <span class="pill open">{{ s.spots_left }} of {{ s.capacity }} spots left</span>
+        {% endif %}
+      </div>
+      <div>
+        {% if s.member_status == "booked" %}
+          <span class="pill booked">Booked ✓</span>
+        {% elif s.member_status == "waitlisted" %}
+          <span class="pill wait">Waitlist #{{ s.waitlist_position }}</span>
+        {% elif g.member %}
+          <form method="post" action="{{ url_for('web.book', session_id=s.id) }}">
+            <button class="btn small">{{ "Join waitlist" if s.spots_left == 0 else "Book" }}</button>
+          </form>
+        {% else %}
+          <a class="btn small secondary" href="{{ url_for('web.login') }}">Log in to book</a>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+{% endfor %}
+{% endblock %}

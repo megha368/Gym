@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}My bookings{% endblock %}
+{% block content %}
+<h1>My bookings</h1>
+
+<section class="card">
+  <h2>My passes</h2>
+  {% set labels = {"drop_in": "Drop-in", "class_pack": "Class pack", "membership": "Membership"} %}
+  {% if passes %}
+  <table>
+    <tr><th>Pass</th><th>Classes left</th><th>Expires</th><th></th></tr>
+    {% for p in passes %}
+    <tr>
+      <td>{{ labels[p.type] }}</td>
+      <td>{% if p.remaining_uses is none %}Unlimited{% else %}{{ p.remaining_uses }} left{% endif %}</td>
+      <td>{{ p.expires_at | short_date if p.expires_at else "Never" }}</td>
+      <td>{% if p.is_valid %}<span class="pill open">Active</span>{% else %}<span class="pill">Used up / expired</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+    <p class="muted">You don't have a pass yet. You need one to book a class.</p>
+  {% endif %}
+  <form method="post" action="{{ url_for('web.buy_pass') }}" class="row">
+    <select name="pass_type">
+      <option value="drop_in">Drop-in (1 class)</option>
+      <option value="class_pack">Class pack (10 classes, 90 days)</option>
+      <option value="membership">Membership (unlimited, 30 days)</option>
+    </select>
+    <button class="btn">Add pass</button>
+  </form>
+  <p class="muted small">Demo only: no real payment is taken.</p>
+</section>
+
+<h2>Upcoming classes</h2>
+{% if bookings %}
+<ul class="sessions">
+  {% for b in bookings %}
+  <li class="session">
+    <div class="time wide">{{ b.start_time | pretty_time }}</div>
+    <div class="info">
+      <strong>{{ b.class_name }}</strong>
+      <span class="muted">with {{ b.instructor_name }}</span>
+    </div>
+    <div>
+      {% if b.can_cancel %}
+        <form method="post" action="{{ url_for('web.cancel', booking_id=b.booking_id) }}">
+          <button class="btn small danger">Cancel</button>
+        </form>
+      {% else %}
+        <span class="pill">Past</span>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+  <p class="muted">Nothing booked yet. <a href="{{ url_for('web.schedule') }}">Browse the schedule</a>.</p>
+{% endif %}
+
+{% if waitlist %}
+<h2>On the waitlist</h2>
+<ul class="sessions">
+  {% for w in waitlist %}
+  <li class="session">
+    <div class="time wide">{{ w.start_time | pretty_time }}</div>
+    <div class="info">
+      <strong>{{ w.class_name }}</strong>
+      <span class="muted">with {{ w.instructor_name }}</span>
+    </div>
+    <div><span class="pill wait">Position #{{ w.position }}</span></div>
+    <div>
+      <form method="post" action="{{ url_for('web.leave_waitlist', session_id=w.session_id) }}">
+        <button class="btn small secondary">Leave</button>
+      </form>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}
