@@ -65,7 +65,7 @@ Status: Decided
 
 Context: The assignment requires at least 70% coverage of core business logic, not framework glue. My rules (capacity, passes, waitlist promotion) depend on SQLite constraints and on the current time.
 
-Decision: I test the service layers of both domains directly with pytest, using a fresh in-memory SQLite database per test (get_connection(":memory:") makes a throwaway database in RAM that vanishes after the test, so tests can't affect each other) and a `now` parameter instead of the real clock, and I measure coverage only on the `scheduling` and `bookings` packages (currently 97%). Routes get a small set of end-to-end tests (entire system is tested) through Flask's test client, and templates and CSS are only checked by hand.
+Decision: I test the service layers of both domains directly with pytest, using a fresh in-memory SQLite database per test. I also have a now parameter instead of a real clock in order to facilitate testing. Coverage is measured only on the scheduling and bookings packages (currently 97%). Routes get a small set of end-to-end tests through Flask's test clients. Templates and css are checked by hand.
 
 Alternatives considered: Testing everything through HTTP routes, rejected because it is slower and mostly tests framework glue instead of rules. 
 
