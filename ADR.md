@@ -32,10 +32,10 @@ Decision:
 I will separate the application into a Class Scheduling domain responsible for class types, instructors, sessions, and capacity, and a Members & Bookings domain responsible for members, passes, bookings, and waitlists. The domains will use separate code modules and services while sharing one SQLite database. Bookings will store only a session_id rather than duplicating session information. 
 
 Alternatives considered: 
-I considered using separate databases for each domain, but rejected this because the assignment requires SQLite at one documented path and because the application does not need the complexity of multiple databases.
+I considered using separate databases for each domain, but rejected this because the assignment requires SQLite at one documented path and because the application does not need the complexity of multiple databases. A single shared module was rejected because it would allow booking code to directly query session tables instead of requiring an explicit module import, preventing the domains from ever being split.
 
 Consequences: 
-Everything is in one database, making things easier to pinpoint and access. 
+Everything is in one database, making things easier to pinpoint and access. Each domain could later become its own service, but Bookings cannot join against session data in SQL, so it calls Scheduling's service file whenever it needs session details, for example when listing a member's bookings.
 
 
 
