@@ -1,9 +1,8 @@
 import sqlite3
 from datetime import datetime, timedelta
 
-from bookings import events, repository, strategies
-from scheduling import service as scheduling_service
-from scheduling.service import SchedulingError
+from bookings import events, repository, scheduling_client, strategies
+from bookings.scheduling_client import SessionNotFound
 
 
 class BookingError(Exception):
@@ -87,7 +86,7 @@ def list_member_bookings(conn, member_id, now=None):
     now = now or datetime.now()
     result = []
     for booking in repository.list_confirmed_bookings_for_member(conn, member_id):
-        info = scheduling_service.get_session_details(conn, booking["session_id"])
+        info = scheduling_client.get_session(booking["session_id"])
         result.append({
             "booking_id": booking["id"],
             "session_id": booking["session_id"],
@@ -105,7 +104,7 @@ def list_member_waitlist(conn, member_id):
     """The sessions a member is waiting for, with their position in line."""
     result = []
     for entry in repository.list_waitlist_entries_for_member(conn, member_id):
-        info = scheduling_service.get_session_details(conn, entry["session_id"])
+        info = scheduling_client.get_session(entry["session_id"])
         result.append({
             "session_id": entry["session_id"],
             "class_name": info["class_name"],
@@ -137,7 +136,7 @@ def get_schedule(conn, member_id=None, now=None):
     """
     now = now or datetime.now()
     schedule = []
-    for session in scheduling_service.list_upcoming_sessions(conn, now=now):
+    for session in scheduling_client.list_upcoming_sessions(now=now):
         item = dict(session)
         taken = repository.count_confirmed_bookings(conn, session["id"])
         item["spots_left"] = max(session["capacity"] - taken, 0)
@@ -212,7 +211,7 @@ def cancel_booking(conn, member_id, booking_id, now=None, bus=None):
     if booking["status"] != "confirmed":
         raise BookingError("This booking is already cancelled")
 
-    session = scheduling_service.get_session_info(conn, booking["session_id"])
+    session = scheduling_client.get_session(booking["session_id"])
     if session["start_time"] <= now.isoformat(timespec="seconds"):
         raise BookingError("This session has already started")
 
@@ -302,10 +301,9 @@ events.default_bus.subscribe(events.BookingCancelled, _on_booking_cancelled)
 def _get_open_session(conn, session_id, now):
     """Ask Scheduling (through its service) for a session that can be booked."""
     try:
-        session = scheduling_service.get_session_info(conn, session_id)
-        is_open = scheduling_service.is_open_for_booking(conn, session_id, now=now)
-    except SchedulingError:
+        session = scheduling_client.get_session(session_id)
+    except SessionNotFound:
         raise BookingError("Session does not exist")
-    if not is_open:
+    if not scheduling_client.is_open_for_booking(session, now=now):
         raise BookingError("This session is not open for booking")
     return session

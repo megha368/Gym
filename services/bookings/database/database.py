@@ -15,33 +15,6 @@ def get_connection(db_path=None):
     return conn
 
 
-def create_scheduling_tables(conn):
-    """Tables owned by the Class Scheduling domain."""
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS class_types (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            name        TEXT NOT NULL UNIQUE,
-            description TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS instructors (
-            id   INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS sessions (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            class_type_id INTEGER NOT NULL REFERENCES class_types(id),
-            instructor_id INTEGER NOT NULL REFERENCES instructors(id),
-            start_time    TEXT NOT NULL,
-            capacity      INTEGER NOT NULL CHECK (capacity > 0),
-            status        TEXT NOT NULL DEFAULT 'scheduled'
-                          CHECK (status IN ('scheduled', 'cancelled'))
-        );
-    """)
-    conn.commit()
-
-
 def create_booking_tables(conn):
     """Tables owned by the Members & Bookings domain."""
     conn.executescript("""
@@ -101,7 +74,5 @@ def create_booking_tables(conn):
 def init_db(db_path=None):
     """Create every table the app needs. Safe to run on every startup."""
     conn = get_connection(db_path)
-    create_scheduling_tables(conn)
     create_booking_tables(conn) 
-    # Day 3: create_booking_tables(conn) goes here
     conn.close()

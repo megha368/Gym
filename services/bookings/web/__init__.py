@@ -3,22 +3,17 @@
 from flask import Flask, g, session
 
 from bookings import auth
-from config.settings import SECRET_KEY, SEED_DEMO_DATA
+from config.settings import SECRET_KEY
 from database.database import get_connection, init_db
-from database.seed import seed_demo_data
 
 
-def create_app(db_path=None, seed_demo=SEED_DEMO_DATA):
+def create_app(db_path=None):
     app = Flask(__name__) # var app is now the website
     app.config["SECRET_KEY"] = SECRET_KEY
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"  # blocks cross-site form posts
     app.config["DB_PATH"] = db_path
 
     init_db(db_path)
-    if seed_demo:
-        conn = get_connection(db_path)
-        seed_demo_data(conn)
-        conn.close()
 
     @app.before_request
     def open_connection():
