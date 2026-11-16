@@ -87,3 +87,19 @@ Decision: I didn't build notifications. Promotions are recorded in the audit log
 Alternatives considered: Sending an email on promotion. I rejected it because it needs an external mail service, which the deployment contract discourages and is overly-complicated to implement. An in-app notifications table was also rejected, because it adds a table and UI without teaching anything new about the architecture
 
 Consequences: A promoted member only finds out by checking their bookings page, and the promotion shows up in the audit log, so the app is less convenient for them. 
+
+6. The split
+
+Date: 2026-11-16
+
+Status: Decided
+
+Context: Assignment 2 requires the monolith to become exactly two services, each in its own container with its own database, talking to each other only over HTTP.
+
+Decision: I kept the seam exactly where ADR-2 put it. The Scheduling service owns class_types, instructors and sessions, and answers two requests: GET /sessions (upcoming sessions) and GET /sessions/{id} (one session with its class and instructor names, or 404). The Bookings service owns members and login, passes, bookings, the waitlist and the audit log. The only thing that crosses the seam is session information, and it only flows one way: Bookings asks Scheduling, and Scheduling never calls Bookings. Every call across the seam goes through one file, bookings/scheduling_client.py, which reads the Scheduling address from SCHEDULING_URL and gives up after SCHEDULING_TIMEOUT_S (2 seconds). The cross-seam flows are server side: booking a class (Bookings needs the session's capacity and status), listing a member's bookings and waitlist (they need class names and times), and the schedule with spots left.
+
+ADR-2 held. In Assignment 1, Bookings already reached Scheduling only through Scheduling's service functions (six call sites), no SQL query joined across the two domains, and session_id was already a plain number. So the split meant replacing those six function calls with HTTP calls, not redesigning the data.
+
+Alternatives considered: Moving capacity checks and the waitlist into Scheduling, so that Scheduling decides whether a class is full. Rejected because counting bookings needs the bookings table, so Scheduling would have to call Bookings, and the two services would depend on each other in both directions. 
+
+Consequences: Scheduling works on its own, because it depends on nothing. Bookings depends on Scheduling: if Scheduling is down, anything that needs session details cannot work fully, so those calls must fail in a designed way (handled in a later step). Listing a member's bookings now costs one HTTP call per booking instead of one database query 
