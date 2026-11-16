@@ -1,6 +1,6 @@
-import sqlite3
 from datetime import datetime
 
+from database.database import IntegrityError
 from scheduling import repository
 
 
@@ -21,7 +21,7 @@ def create_class_type(conn, name, description=None):
         raise SchedulingError("Class type name is required")
     try:
         return repository.add_class_type(conn, name, description)
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         raise SchedulingError(f"Class type '{name}' already exists")
 
 

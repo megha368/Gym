@@ -3,3 +3,4 @@ __pycache__/
 *.db
 .coverage
 .pytest_cache/
+.env

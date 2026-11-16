@@ -20,7 +20,7 @@ def seed_demo_data(conn, now=None):
     """Fill an empty database with a week of sample sessions. Returns True if it seeded."""
     now = now or datetime.now()
     # Setup script, not business logic, so a direct check is fine here
-    if conn.execute("SELECT COUNT(*) FROM class_types").fetchone()[0] > 0:
+    if conn.execute("SELECT COUNT(*) AS n FROM class_types").fetchone()["n"] > 0:
         return False
 
     class_ids = [scheduling_service.create_class_type(conn, n, d) for n, d in CLASSES]

@@ -1,5 +1,6 @@
-import sqlite3
 from datetime import datetime, timedelta
+
+from database.database import DatabaseError, IntegrityError
 
 from bookings import events, repository, scheduling_client, strategies
 from bookings.scheduling_client import SessionNotFound
@@ -75,7 +76,7 @@ def book_class(conn, member_id, session_id, now=None):
         )
         booking_id = repository.add_booking(conn, member_id, session_id, pass_row["id"])
         conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         conn.rollback()
         raise BookingError("You already have a booking for this session")
     return booking_id
@@ -177,7 +178,7 @@ def join_waitlist(conn, member_id, session_id, now=None):
     try:
         repository.add_waitlist_entry(conn, member_id, session_id)
         conn.commit()
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         conn.rollback()
         raise BookingError("You are already on the waitlist for this session")
     return get_waitlist_position(conn, member_id, session_id)
@@ -224,7 +225,7 @@ def cancel_booking(conn, member_id, booking_id, now=None, bus=None):
             conn, pass_row["id"], strategy.remaining_after_refund(pass_row)
         )
         conn.commit()
-    except sqlite3.Error:
+    except DatabaseError:
         conn.rollback()
         raise
 
@@ -282,7 +283,7 @@ def promote_next_from_waitlist(conn, session_id, now=None):
                 conn, member_id, session_id, pass_row["id"]
             )
             conn.commit()
-        except sqlite3.Error:
+        except DatabaseError:
             conn.rollback()
             raise
         return {"member_id": member_id, "booking_id": booking_id, "session_id": session_id}

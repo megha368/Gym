@@ -1,8 +1,8 @@
-import sqlite3
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from bookings import repository
+from database.database import IntegrityError
 
 MIN_PASSWORD_LENGTH = 8
 
@@ -34,7 +34,8 @@ def register(conn, name, email, password):
     password_hash = generate_password_hash(password)
     try:
         return repository.add_member(conn, name, email, password_hash)
-    except sqlite3.IntegrityError:
+    except IntegrityError:
+        conn.rollback()
         raise AuthError("An account with this email already exists")
 
 

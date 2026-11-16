@@ -1,0 +1,49 @@
+# Local development stack. Start it with:  docker compose up
+#
+# Today it runs only the database. The two services and the UI are added once they
+# have Dockerfiles.
+#
+# Passwords come from the .env file next to this one (copy .env.example to .env).
+# Compose reads .env automatically; .env is in .gitignore, so no password is committed.
+
+services:
+  # SQL Server, holding one database per service (created by db-init below)
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64          # Microsoft only publishes an Intel image; Rosetta runs it on Apple Silicon
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env}
+    ports:
+      - "1433:1433"                # so services running on your Mac can reach it at localhost:1433
+    volumes:
+      - db-data:/var/opt/mssql     # keeps the data when the container is stopped or recreated
+    healthcheck:                   # "healthy" once SQL Server actually answers a query
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  # One-off job: runs db/init.sql once the database is healthy, then exits
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env}
+      SCHEDULING_DB_PASSWORD: ${SCHEDULING_DB_PASSWORD:?Set SCHEDULING_DB_PASSWORD in .env}
+      BOOKINGS_DB_PASSWORD: ${BOOKINGS_DB_PASSWORD:?Set BOOKINGS_DB_PASSWORD in .env}
+    volumes:
+      - ./db/init.sql:/init.sql:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >-
+        /opt/mssql-tools18/bin/sqlcmd -C -S db -U sa -P "$$MSSQL_SA_PASSWORD" -b -i /init.sql
+        -v SCHEDULING_DB_PASSWORD="$$SCHEDULING_DB_PASSWORD" BOOKINGS_DB_PASSWORD="$$BOOKINGS_DB_PASSWORD"
+    restart: "no"
+
+volumes:
+  db-data:

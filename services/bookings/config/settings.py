@@ -1,7 +1,7 @@
 import os
 
 PORT = int(os.environ.get("PORT", 8000))
-DATA_DIR = os.environ.get("DATA_DIR", "data")
+DATABASE_URL = os.environ.get("DATABASE_URL")  # secret, no default: mssql://user:password@host:port/database
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-change-me") # signs the login cookie so users can't forge it
 
 # Where to find the Scheduling service, and how long to wait for it before giving up
