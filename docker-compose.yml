@@ -1,10 +1,10 @@
-# Local development stack. Start it with:  docker compose up
+# The whole system on your computer. From a clean clone:
+#     cp .env.example .env        (then choose your own passwords in .env)
+#     docker compose up --build
+# Then open http://localhost:8080
 #
-# Today it runs only the database. The two services and the UI are added once they
-# have Dockerfiles.
-#
-# Passwords come from the .env file next to this one (copy .env.example to .env).
-# Compose reads .env automatically; .env is in .gitignore, so no password is committed.
+# Passwords and the token secret come from the .env file next to this one. Compose reads
+# .env automatically; .env is in .gitignore, so none of them is ever committed.
 
 services:
   # SQL Server, holding one database per service (created by db-init below)
@@ -15,7 +15,7 @@ services:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in .env}
     ports:
-      - "1433:1433"                # so services running on your Mac can reach it at localhost:1433
+      - "1433:1433"                # lets you inspect the database from your Mac (optional)
     volumes:
       - db-data:/var/opt/mssql     # keeps the data when the container is stopped or recreated
     healthcheck:                   # "healthy" once SQL Server actually answers a query
@@ -44,6 +44,51 @@ services:
         /opt/mssql-tools18/bin/sqlcmd -C -S db -U sa -P "$$MSSQL_SA_PASSWORD" -b -i /init.sql
         -v SCHEDULING_DB_PASSWORD="$$SCHEDULING_DB_PASSWORD" BOOKINGS_DB_PASSWORD="$$BOOKINGS_DB_PASSWORD"
     restart: "no"
+
+  # Service 1: class types, instructors and sessions
+  scheduling:
+    build:
+      context: ./services/scheduling
+      args:
+        VERSION: local
+    platform: linux/amd64          # same CPU type as Azure
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: mssql://scheduling_user:${SCHEDULING_DB_PASSWORD}@db:1433/scheduling
+      UI_ORIGIN: http://localhost:8080
+      SEED_DEMO_DATA: "1"
+    ports:
+      - "8001:8000"                # http://localhost:8001 on your Mac -> port 8000 in the container
+
+  # Service 2: members and login, passes, bookings, waitlist, audit log
+  bookings:
+    build:
+      context: ./services/bookings
+      args:
+        VERSION: local
+    platform: linux/amd64
+    depends_on:                    # deliberately NOT on scheduling: it must run without it
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: mssql://bookings_user:${BOOKINGS_DB_PASSWORD}@db:1433/bookings
+      SECRET_KEY: ${BOOKINGS_SECRET_KEY:?Set BOOKINGS_SECRET_KEY in .env}
+      SCHEDULING_URL: http://scheduling:8000   # containers find each other by service name
+      SCHEDULING_TIMEOUT_S: "2"
+      UI_ORIGIN: http://localhost:8080
+    ports:
+      - "8000:8000"
+
+  # The static UI, served by a stock nginx image with the ui/ folder mounted (no Dockerfile).
+  # Not a service container: it only hands out files; the browser calls the services.
+  ui:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./ui:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
 
 volumes:
   db-data:

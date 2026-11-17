@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in · Flow Studio</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+  <script src="login.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html">Flow Studio</a>
+    <nav id="nav"></nav>
+  </header>
+  <main>
+    <div id="messages"></div>
+    <section class="card narrow">
+      <h1>Welcome back</h1>
+      <form id="login">
+        <label>Email
+          <input type="email" name="email" required autocomplete="email">
+        </label>
+        <label>Password
+          <input type="password" name="password" required autocomplete="current-password">
+        </label>
+        <button class="btn">Log in</button>
+      </form>
+      <p class="muted">New here? <a href="register.html">Create an account</a></p>
+    </section>
+  </main>
+</body>
+</html>

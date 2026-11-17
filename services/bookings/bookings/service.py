@@ -95,6 +95,8 @@ def _session_details(session_ids):
             continue
         try:
             details[session_id] = scheduling_client.get_session(session_id)
+        except SessionNotFound:
+            continue  # the session no longer exists in Scheduling: shown without details
         except SchedulingUnavailable:
             break
     return details
@@ -163,29 +165,30 @@ def list_member_passes(conn, member_id, now=None):
     return result
 
 
-def get_schedule(conn, member_id=None, now=None):
-    """Upcoming sessions with spots left, plus this member's status in each.
+def get_availability(conn, session_ids, member_id=None):
+    """Bookings' half of the schedule: for each session, how many spots are taken and
+    this member's status in it. The UI combines it with the session list from Scheduling.
 
-    member_id=None means a visitor who is not logged in.
+    Returns {session_id: {"booked": n, "member_status": None | "booked" | "waitlisted",
+    "waitlist_position": None | n}}. member_id=None means a visitor who is not logged in.
     """
-    now = now or datetime.now()
-    schedule = []
-    for session in scheduling_client.list_upcoming_sessions(now=now):
-        item = dict(session)
-        taken = repository.count_confirmed_bookings(conn, session["id"])
-        item["spots_left"] = max(session["capacity"] - taken, 0)
-        item["member_status"] = None  # None, "booked" or "waitlisted"
-        item["waitlist_position"] = None
+    result = {}
+    for session_id in session_ids:
+        item = {
+            "booked": repository.count_confirmed_bookings(conn, session_id),
+            "member_status": None,
+            "waitlist_position": None,
+        }
         if member_id is not None:
-            if repository.get_confirmed_booking(conn, member_id, session["id"]):
+            if repository.get_confirmed_booking(conn, member_id, session_id):
                 item["member_status"] = "booked"
             else:
-                position = get_waitlist_position(conn, member_id, session["id"])
+                position = get_waitlist_position(conn, member_id, session_id)
                 if position is not None:
                     item["member_status"] = "waitlisted"
                     item["waitlist_position"] = position
-        schedule.append(item)
-    return schedule
+        result[session_id] = item
+    return result
 
 
 def get_waitlist_position(conn, member_id, session_id):

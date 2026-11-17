@@ -1,0 +1,10 @@
+# Never sent to Docker when building the image: tests, caches, local databases, secrets
+**/__pycache__
+**/*.pyc
+tests/
+.pytest_cache/
+.coverage
+.env
+*.db
+data/
+requirements-dev.txt

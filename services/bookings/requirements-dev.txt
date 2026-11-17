@@ -1,0 +1,4 @@
+# Everything the image needs, plus the tools used only for testing (not installed in the image)
+-r requirements.txt
+pytest==8.3.4
+pytest-cov==6.0.0

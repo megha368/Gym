@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Create account · Flow Studio</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+  <script src="register.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html">Flow Studio</a>
+    <nav id="nav"></nav>
+  </header>
+  <main>
+    <div id="messages"></div>
+    <section class="card narrow">
+      <h1>Create your account</h1>
+      <form id="register">
+        <label>Name
+          <input name="name" required autocomplete="name">
+        </label>
+        <label>Email
+          <input type="email" name="email" required autocomplete="email">
+        </label>
+        <label>Password
+          <input type="password" name="password" minlength="8" required autocomplete="new-password">
+          <small>At least 8 characters</small>
+        </label>
+        <button class="btn">Create account</button>
+      </form>
+      <p class="muted">Already a member? <a href="login.html">Log in</a></p>
+    </section>
+  </main>
+</body>
+</html>
