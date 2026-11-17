@@ -49,7 +49,7 @@ def list_scheduled_sessions_from(conn, from_time):
     return conn.execute(
         """
         SELECT s.id, ct.name AS class_name, i.name AS instructor_name,
-               s.start_time, s.capacity, s.status
+               s.start_time, s.duration_minutes, s.capacity, s.status
         FROM sessions s
         JOIN class_types ct ON ct.id = s.class_type_id
         JOIN instructors i  ON i.id  = s.instructor_id
@@ -63,7 +63,7 @@ def get_session_with_names(conn, session_id):
     return conn.execute(
         """
         SELECT s.id, ct.name AS class_name, i.name AS instructor_name,
-               s.start_time, s.capacity, s.status
+               s.start_time, s.duration_minutes, s.capacity, s.status
         FROM sessions s
         JOIN class_types ct ON ct.id = s.class_type_id
         JOIN instructors i  ON i.id  = s.instructor_id
