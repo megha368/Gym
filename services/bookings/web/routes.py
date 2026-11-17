@@ -132,11 +132,15 @@ def book(session_id):
 @login_required
 def my_bookings():
     member_id = g.member["id"]
+    bookings = service.list_member_bookings(g.conn, member_id)
+    waitlist = service.list_member_waitlist(g.conn, member_id)
     return render_template(
         "bookings.html",
-        bookings=service.list_member_bookings(g.conn, member_id),
-        waitlist=service.list_member_waitlist(g.conn, member_id),
+        bookings=bookings,
+        waitlist=waitlist,
         passes=service.list_member_passes(g.conn, member_id),
+        # True if some class details couldn't be fetched because Scheduling is down
+        details_missing=not all(item["details_available"] for item in bookings + waitlist),
     )
 
 

@@ -80,3 +80,19 @@ def get_connection(attempts=REQUEST_ATTEMPTS, url=None):
             )
             time.sleep(delay)
             delay = min(delay * 2, 10)
+
+
+def check_database():
+    """Raise an error unless we can both read and write this service's database.
+
+    The write is a test row in schema_migrations that is rolled back straight away, so
+    nothing is ever kept. Only one attempt: a health check should answer quickly, and
+    whoever is checking (the deploy pipeline) retries on its own.
+    """
+    conn = get_connection(attempts=1)
+    try:
+        conn.execute("SELECT COUNT(*) AS n FROM schema_migrations").fetchone()
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (%s)", ("health-check",))
+        conn.rollback()
+    finally:
+        conn.close()

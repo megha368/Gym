@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from database.database import DatabaseError, IntegrityError
 
 from bookings import events, repository, scheduling_client, strategies
-from bookings.scheduling_client import SessionNotFound
+from bookings.scheduling_client import SchedulingUnavailable, SessionNotFound
 
 
 class BookingError(Exception):
@@ -82,38 +82,71 @@ def book_class(conn, member_id, session_id, now=None):
     return booking_id
 
 
+def _session_details(session_ids):
+    """Ask Scheduling for each session's details.
+
+    Returns a dict {session_id: details}. If Scheduling is unavailable, we stop asking after
+    the first failure (otherwise every remaining call would wait for its own timeout) and the
+    remaining sessions are simply missing from the dict.
+    """
+    details = {}
+    for session_id in session_ids:
+        if session_id in details:
+            continue
+        try:
+            details[session_id] = scheduling_client.get_session(session_id)
+        except SchedulingUnavailable:
+            break
+    return details
+
+
+def _soonest_first(item):
+    # items without details (Scheduling unavailable) go last
+    return item["start_time"] or "9999"
+
+
 def list_member_bookings(conn, member_id, now=None):
-    """A member's confirmed bookings with session details from Scheduling, soonest first."""
+    """A member's confirmed bookings with session details from Scheduling, soonest first.
+
+    If Scheduling is unavailable, the bookings are still listed (they are Bookings' own data),
+    with details_available=False and no class name, time or cancel button.
+    """
     now = now or datetime.now()
+    bookings = repository.list_confirmed_bookings_for_member(conn, member_id)
+    details = _session_details(b["session_id"] for b in bookings)
     result = []
-    for booking in repository.list_confirmed_bookings_for_member(conn, member_id):
-        info = scheduling_client.get_session(booking["session_id"])
+    for booking in bookings:
+        info = details.get(booking["session_id"])
         result.append({
             "booking_id": booking["id"],
             "session_id": booking["session_id"],
-            "class_name": info["class_name"],
-            "instructor_name": info["instructor_name"],
-            "start_time": info["start_time"],
-            "session_status": info["status"],
-            "can_cancel": info["start_time"] > now.isoformat(timespec="seconds"),
+            "details_available": info is not None,
+            "class_name": info["class_name"] if info else None,
+            "instructor_name": info["instructor_name"] if info else None,
+            "start_time": info["start_time"] if info else None,
+            "session_status": info["status"] if info else None,
+            "can_cancel": bool(info) and info["start_time"] > now.isoformat(timespec="seconds"),
         })
-    result.sort(key=lambda b: b["start_time"])
+    result.sort(key=_soonest_first)
     return result
 
 
 def list_member_waitlist(conn, member_id):
     """The sessions a member is waiting for, with their position in line."""
+    entries = repository.list_waitlist_entries_for_member(conn, member_id)
+    details = _session_details(e["session_id"] for e in entries)
     result = []
-    for entry in repository.list_waitlist_entries_for_member(conn, member_id):
-        info = scheduling_client.get_session(entry["session_id"])
+    for entry in entries:
+        info = details.get(entry["session_id"])
         result.append({
             "session_id": entry["session_id"],
-            "class_name": info["class_name"],
-            "instructor_name": info["instructor_name"],
-            "start_time": info["start_time"],
+            "details_available": info is not None,
+            "class_name": info["class_name"] if info else None,
+            "instructor_name": info["instructor_name"] if info else None,
+            "start_time": info["start_time"] if info else None,
             "position": get_waitlist_position(conn, member_id, entry["session_id"]),
         })
-    result.sort(key=lambda w: w["start_time"])
+    result.sort(key=_soonest_first)
     return result
 
 

@@ -33,17 +33,27 @@
 </section>
 
 <h2>Upcoming classes</h2>
+{% if details_missing %}
+  <div class="flash error">Class details are temporarily unavailable, so some classes are shown without their name and time. Your bookings are safe. Try again in a minute.</div>
+{% endif %}
 {% if bookings %}
 <ul class="sessions">
   {% for b in bookings %}
   <li class="session">
+    {% if b.details_available %}
     <div class="time wide">{{ b.start_time | pretty_time }}</div>
     <div class="info">
       <strong>{{ b.class_name }}</strong>
       <span class="muted">with {{ b.instructor_name }}</span>
     </div>
+    {% else %}
+    <div class="time wide">Time unavailable</div>
+    <div class="info"><strong>Booked class</strong> <span class="muted">(details unavailable)</span></div>
+    {% endif %}
     <div>
-      {% if b.can_cancel %}
+      {% if not b.details_available %}
+        <span class="pill">Cancel unavailable</span>
+      {% elif b.can_cancel %}
         <form method="post" action="{{ url_for('web.cancel', booking_id=b.booking_id) }}">
           <button class="btn small danger">Cancel</button>
         </form>
@@ -63,11 +73,16 @@
 <ul class="sessions">
   {% for w in waitlist %}
   <li class="session">
+    {% if w.details_available %}
     <div class="time wide">{{ w.start_time | pretty_time }}</div>
     <div class="info">
       <strong>{{ w.class_name }}</strong>
       <span class="muted">with {{ w.instructor_name }}</span>
     </div>
+    {% else %}
+    <div class="time wide">Time unavailable</div>
+    <div class="info"><strong>Waitlisted class</strong> <span class="muted">(details unavailable)</span></div>
+    {% endif %}
     <div><span class="pill wait">Position #{{ w.position }}</span></div>
     <div>
       <form method="post" action="{{ url_for('web.leave_waitlist', session_id=w.session_id) }}">

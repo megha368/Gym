@@ -11,12 +11,14 @@ from config.settings import PORT, SEED_DEMO_DATA
 from database.database import STARTUP_ATTEMPTS, get_connection
 from database.migrations import apply_migrations
 from database.seed import seed_demo_data
+from observability import health_response, setup_request_logging
 from scheduling import service
 from scheduling.service import SchedulingError
 
 
 def create_app(seed_demo=SEED_DEMO_DATA):
     app = Flask(__name__)
+    setup_request_logging(app)
 
     # At startup: wait for the database (it may be paused on Azure), bring its schema
     # up to date, and add the demo classes if the database is empty.
@@ -30,7 +32,7 @@ def create_app(seed_demo=SEED_DEMO_DATA):
 
     @app.get("/health")
     def health():
-        return {"status": "ok"}
+        return health_response()
 
     @app.get("/sessions")
     def list_sessions():

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Temporarily unavailable{% endblock %}
+{% block content %}
+<h1>The class schedule is temporarily unavailable</h1>
+<section class="card">
+  <p>We can't reach the class schedule right now, so this page can't be shown and nothing was changed.</p>
+  <p>Your account, passes and existing bookings are safe. Please try again in a minute.</p>
+  {% if g.member %}<p><a class="btn" href="{{ url_for('web.my_bookings') }}">Go to my bookings</a></p>{% endif %}
+</section>
+{% endblock %}
