@@ -1,0 +1,112 @@
+# CI: runs on every push (any branch) and every pull request.
+#   1. test:        for each service: install, lint, unit tests with coverage (fails under
+#                   70%), and build its Docker image (a failed build fails the run)
+#   2. integration: starts the whole system with docker compose and tests flows across
+#                   the seam, including with Scheduling stopped
+# CD (deploying to Azure from main) is added as a third job that needs both of these.
+#
+# No secret is needed for CI: the tests' SQL Server is a throwaway container whose
+# password is generated randomly for each run. CI never touches Azure SQL.
+
+name: CI/CD
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: Test ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false          # one service failing doesn't cancel the other's run
+      matrix:
+        service: [scheduling, bookings]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Start a throwaway SQL Server for the tests
+        run: |
+          SA_PASSWORD="Ci_$(openssl rand -hex 12)_Aa1"
+          echo "::add-mask::$SA_PASSWORD"
+          echo "TEST_DATABASE_URL=mssql://sa:${SA_PASSWORD}@localhost:1433/${{ matrix.service }}_test" >> "$GITHUB_ENV"
+          docker run -d --name mssql -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$SA_PASSWORD" \
+            -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+          for attempt in $(seq 1 60); do
+            if docker exec mssql /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P "$SA_PASSWORD" \
+                 -Q "SELECT 1" -b -o /dev/null; then
+              echo "SQL Server is ready"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs mssql; exit 1
+
+      - name: Install
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit tests with coverage (fails below 70%)
+        run: pytest --cov=${{ matrix.service }} --cov-report=term-missing --cov-fail-under=70
+
+      - name: Build the Docker image
+        run: docker build --build-arg VERSION=${{ github.sha }} -t ${{ matrix.service }}:${{ github.sha }} .
+
+  integration:
+    name: Integration test (docker compose)
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create .env with throwaway passwords
+        run: |
+          gen() { echo "Ci_$(openssl rand -hex 12)_Aa1"; }
+          {
+            echo "MSSQL_SA_PASSWORD=$(gen)"
+            echo "SCHEDULING_DB_PASSWORD=$(gen)"
+            echo "BOOKINGS_DB_PASSWORD=$(gen)"
+            echo "BOOKINGS_SECRET_KEY=$(openssl rand -hex 32)"
+          } > .env
+
+      - name: Start the whole system
+        run: docker compose up -d --build
+
+      - name: Wait until both services are healthy
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fs localhost:8001/health && curl -fs localhost:8000/health; then exit 0; fi
+            sleep 3
+          done
+          exit 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test tools
+        run: pip install -r tests/integration/requirements.txt
+
+      - name: Cross-seam tests (both services running)
+        run: pytest tests/integration
+
+      - name: Partial failure tests (Scheduling stopped)
+        run: |
+          docker compose stop scheduling
+          EXPECT_SCHEDULING_DOWN=1 pytest tests/integration
+
+      - name: Show the containers' logs if something failed
+        if: failure()
+        run: docker compose logs
+
+      - name: Clean up
+        if: always()
+        run: docker compose down -v

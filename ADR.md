@@ -87,3 +87,43 @@ Decision: I didn't build notifications. Promotions are recorded in the audit log
 Alternatives considered: Sending an email on promotion. I rejected it because it needs an external mail service, which the deployment contract discourages and is overly-complicated to implement. An in-app notifications table was also rejected, because it adds a table and UI without teaching anything new about the architecture
 
 Consequences: A promoted member only finds out by checking their bookings page, and the promotion shows up in the audit log, so the app is less convenient for them. 
+
+6. The split
+
+Date: 2026-11-16
+
+Status: Decided
+
+Context: Assignment 2 requires the monolith to become exactly two services, each in its own container with its own database, talking to each other only over HTTP.
+
+Decision: I kept the seam exactly where ADR-2 put it. The Scheduling service owns class_types, instructors and sessions, and answers two requests: GET /sessions (upcoming sessions) and GET /sessions/{id} (one session with its class and instructor names, or 404). The Bookings service owns members and login, passes, bookings, the waitlist and the audit log. The only thing that crosses the seam is session information, and it only flows one way: Bookings asks Scheduling, and Scheduling never calls Bookings. Every call across the seam goes through one file, bookings/scheduling_client.py, which reads the Scheduling address from SCHEDULING_URL and gives up after SCHEDULING_TIMEOUT_S (2 seconds). The cross-seam flows are server side: booking a class (Bookings needs the session's capacity and status), listing a member's bookings and waitlist (they need class names and times), and the schedule with spots left.
+
+ADR-2 held. In Assignment 1, Bookings already reached Scheduling only through Scheduling's service functions (six call sites), no SQL query joined across the two domains, and session_id was already a plain number. So the split meant replacing those six function calls with HTTP calls, not redesigning the data.
+
+Alternatives considered: Moving capacity checks and the waitlist into Scheduling, so that Scheduling decides whether a class is full. Rejected because counting bookings needs the bookings table, so Scheduling would have to call Bookings, and the two services would depend on each other in both directions. 
+
+Consequences: Scheduling works on its own, because it depends on nothing. Bookings depends on Scheduling: if Scheduling is down, anything that needs session details cannot work fully, so those calls must fail in a designed way (handled in a later step). Listing a member's bookings now costs one HTTP call per booking instead of one database query 
+
+Update (2026-11-18): The UI is now static pages in ui/ that call both services from the browser. The schedule page gets the classes from Scheduling and the spots and my own status from Bookings and combines them, so it still shows the classes if Bookings is down. Booking stays on the server because the capacity check can't be skipped. Login now uses a signed token instead of a cookie, because the UI and the services are on different websites and browsers block cookies between sites.
+
+7. Data and migrations
+
+Date: 2026-11-18
+
+Status: Decided
+
+Context:
+In Assignment 1 both domains shared one SQLite file (ADR-3) and the tables were created on every start with CREATE TABLE IF NOT EXISTS. Now each service needs its own SQL Server database, and I need to be able to change a table without losing the data already in it.
+
+Decision:
+There was no real data to move since Assignment 1 only had demo data, so each table moved to the database of the service that owns it. Scheduling has class_types, instructors and sessions, and Bookings has members, passes, bookings, waitlist_entries and audit_log. Each service logs in with its own user that only exists in its own database, so it can't read the other service's tables. Tables are now created and changed by numbered SQL files in each service's migrations folder. When a service starts, my migration runner applies any file that isn't recorded in the schema_migrations table yet, inside a transaction, so every migration runs exactly once. For example, 002 adds duration_minutes to sessions with DEFAULT 60, so the existing sessions get 60 and nothing is lost.
+
+Because bookings.session_id now points to another database, it can't be a foreign key anymore, and one transaction can't cover both databases. To make up for this, Bookings asks Scheduling about the session before saving a booking and rejects sessions that don't exist or aren't open. When listing bookings, a session that can't be found is still shown, just without its details.
+
+If a migration fails, its transaction is rolled back so the database doesn't change, the service doesn't start, and the health check fails the pipeline, so I fix the file and redeploy. If a migration works but is wrong, I write a new migration to fix it instead of editing the old one. If data is actually lost, I can restore the database from Azure SQL's automatic backups.
+
+Alternatives considered:
+Alembic, rejected because I don't use SQLAlchemy and my own runner is short enough to explain. Keeping CREATE TABLE IF NOT EXISTS, rejected because it can't change a table that already has data in it.
+
+Consequences:
+Each service can change its own tables without touching the other, but the database no longer stops a booking for a session that doesn't exist, so my code and tests have to. Running migrations at startup is only safe because each service runs as one container with one worker.

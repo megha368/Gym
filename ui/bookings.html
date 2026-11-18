@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My bookings · Flow Studio</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+  <script src="bookings.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="index.html">Flow Studio</a>
+    <nav id="nav"></nav>
+  </header>
+  <main>
+    <div id="messages"></div>
+    <h1>My bookings</h1>
+    <section class="card">
+      <h2>My passes</h2>
+      <div id="passes"><p class="muted">Loading…</p></div>
+      <form id="buy-pass" class="row">
+        <select name="pass_type">
+          <option value="drop_in">Drop-in (1 class)</option>
+          <option value="class_pack">Class pack (10 classes, 90 days)</option>
+          <option value="membership">Membership (unlimited, 30 days)</option>
+        </select>
+        <button class="btn">Add pass</button>
+      </form>
+      <p class="muted small">Demo only: no real payment is taken.</p>
+    </section>
+    <h2>Upcoming classes</h2>
+    <div id="bookings"><p class="muted">Loading…</p></div>
+    <div id="waitlist"></div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,346 @@
+from datetime import datetime, timedelta
+
+from database.database import DatabaseError, IntegrityError
+
+from bookings import events, repository, scheduling_client, strategies
+from bookings.scheduling_client import SchedulingUnavailable, SessionNotFound
+
+
+class BookingError(Exception):
+    """Raised when a booking rule is broken."""
+
+
+class SessionFullError(BookingError):
+    """The session has no free spots (Day 4: caller offers the waitlist)."""
+
+
+# What each pass type looks like when a member buys it
+PASS_DEFAULTS = {
+    "drop_in": {"uses": 1, "valid_days": None},
+    "class_pack": {"uses": 10, "valid_days": 90},
+    "membership": {"uses": None, "valid_days": 30},
+}
+
+
+def buy_pass(conn, member_id, pass_type, now=None):
+    now = now or datetime.now()
+    if pass_type not in PASS_DEFAULTS:
+        raise BookingError(f"Unknown pass type: {pass_type}")
+    if repository.get_member_by_id(conn, member_id) is None:
+        raise BookingError("Member does not exist")
+
+    defaults = PASS_DEFAULTS[pass_type]
+    expires_at = None
+    if defaults["valid_days"] is not None:
+        expires_at = (now + timedelta(days=defaults["valid_days"])).isoformat(
+            timespec="seconds"
+        )
+    return repository.add_pass(conn, member_id, pass_type, defaults["uses"], expires_at)
+
+
+def find_usable_pass(conn, member_id, now):
+    """The member's best valid pass (membership > class pack > drop-in), or None."""
+    passes = [dict(p) for p in repository.list_passes_for_member(conn, member_id)]
+    usable = [
+        p for p in passes
+        if strategies.get_strategy(p["type"]).is_valid(p, now)
+    ]
+    if not usable:
+        return None
+    return min(usable, key=lambda p: strategies.get_strategy(p["type"]).priority)
+
+
+def book_class(conn, member_id, session_id, now=None):
+    now = now or datetime.now()
+
+    if repository.get_member_by_id(conn, member_id) is None:
+        raise BookingError("Member does not exist")
+
+    session = _get_open_session(conn, session_id, now)
+
+    if repository.get_confirmed_booking(conn, member_id, session_id):
+        raise BookingError("You already have a booking for this session")
+
+    if repository.count_confirmed_bookings(conn, session_id) >= session["capacity"]:
+        raise SessionFullError("This session is full")
+
+    pass_row = find_usable_pass(conn, member_id, now)
+    if pass_row is None:
+        raise BookingError("You have no valid pass for this booking")
+
+    strategy = strategies.get_strategy(pass_row["type"])
+    try:
+        # Two changes that must succeed together: use up the pass + create the booking
+        repository.set_pass_remaining(
+            conn, pass_row["id"], strategy.remaining_after_use(pass_row)
+        )
+        booking_id = repository.add_booking(conn, member_id, session_id, pass_row["id"])
+        conn.commit()
+    except IntegrityError:
+        conn.rollback()
+        raise BookingError("You already have a booking for this session")
+    return booking_id
+
+
+def _session_details(session_ids):
+    """Ask Scheduling for each session's details.
+
+    Returns a dict {session_id: details}. If Scheduling is unavailable, we stop asking after
+    the first failure (otherwise every remaining call would wait for its own timeout) and the
+    remaining sessions are simply missing from the dict.
+    """
+    details = {}
+    for session_id in session_ids:
+        if session_id in details:
+            continue
+        try:
+            details[session_id] = scheduling_client.get_session(session_id)
+        except SessionNotFound:
+            continue  # the session no longer exists in Scheduling: shown without details
+        except SchedulingUnavailable:
+            break
+    return details
+
+
+def _soonest_first(item):
+    # items without details (Scheduling unavailable) go last
+    return item["start_time"] or "9999"
+
+
+def list_member_bookings(conn, member_id, now=None):
+    """A member's confirmed bookings with session details from Scheduling, soonest first.
+
+    If Scheduling is unavailable, the bookings are still listed (they are Bookings' own data),
+    with details_available=False and no class name, time or cancel button.
+    """
+    now = now or datetime.now()
+    bookings = repository.list_confirmed_bookings_for_member(conn, member_id)
+    details = _session_details(b["session_id"] for b in bookings)
+    result = []
+    for booking in bookings:
+        info = details.get(booking["session_id"])
+        result.append({
+            "booking_id": booking["id"],
+            "session_id": booking["session_id"],
+            "details_available": info is not None,
+            "class_name": info["class_name"] if info else None,
+            "instructor_name": info["instructor_name"] if info else None,
+            "start_time": info["start_time"] if info else None,
+            "session_status": info["status"] if info else None,
+            "can_cancel": bool(info) and info["start_time"] > now.isoformat(timespec="seconds"),
+        })
+    result.sort(key=_soonest_first)
+    return result
+
+
+def list_member_waitlist(conn, member_id):
+    """The sessions a member is waiting for, with their position in line."""
+    entries = repository.list_waitlist_entries_for_member(conn, member_id)
+    details = _session_details(e["session_id"] for e in entries)
+    result = []
+    for entry in entries:
+        info = details.get(entry["session_id"])
+        result.append({
+            "session_id": entry["session_id"],
+            "details_available": info is not None,
+            "class_name": info["class_name"] if info else None,
+            "instructor_name": info["instructor_name"] if info else None,
+            "start_time": info["start_time"] if info else None,
+            "position": get_waitlist_position(conn, member_id, entry["session_id"]),
+        })
+    result.sort(key=_soonest_first)
+    return result
+
+
+def list_member_passes(conn, member_id, now=None):
+    """A member's passes, each marked valid or not by its strategy."""
+    now = now or datetime.now()
+    result = []
+    for row in repository.list_passes_for_member(conn, member_id):
+        pass_row = dict(row)
+        pass_row["is_valid"] = strategies.get_strategy(pass_row["type"]).is_valid(
+            pass_row, now
+        )
+        result.append(pass_row)
+    return result
+
+
+def get_availability(conn, session_ids, member_id=None):
+    """Bookings' half of the schedule: for each session, how many spots are taken and
+    this member's status in it. The UI combines it with the session list from Scheduling.
+
+    Returns {session_id: {"booked": n, "member_status": None | "booked" | "waitlisted",
+    "waitlist_position": None | n}}. member_id=None means a visitor who is not logged in.
+    """
+    result = {}
+    for session_id in session_ids:
+        item = {
+            "booked": repository.count_confirmed_bookings(conn, session_id),
+            "member_status": None,
+            "waitlist_position": None,
+        }
+        if member_id is not None:
+            if repository.get_confirmed_booking(conn, member_id, session_id):
+                item["member_status"] = "booked"
+            else:
+                position = get_waitlist_position(conn, member_id, session_id)
+                if position is not None:
+                    item["member_status"] = "waitlisted"
+                    item["waitlist_position"] = position
+        result[session_id] = item
+    return result
+
+
+def get_waitlist_position(conn, member_id, session_id):
+    """1 = first in line, or None if the member is not on the waitlist."""
+    entry = repository.get_waitlist_entry(conn, member_id, session_id)
+    if entry is None:
+        return None
+    return repository.count_waitlist_up_to(conn, session_id, entry["id"])
+
+
+def join_waitlist(conn, member_id, session_id, now=None):
+    now = now or datetime.now()
+
+    if repository.get_member_by_id(conn, member_id) is None:
+        raise BookingError("Member does not exist")
+    session = _get_open_session(conn, session_id, now)
+
+    if repository.get_confirmed_booking(conn, member_id, session_id):
+        raise BookingError("You already have a booking for this session")
+    if repository.count_confirmed_bookings(conn, session_id) < session["capacity"]:
+        raise BookingError("This session still has free spots, book it instead")
+
+    try:
+        repository.add_waitlist_entry(conn, member_id, session_id)
+        conn.commit()
+    except IntegrityError:
+        conn.rollback()
+        raise BookingError("You are already on the waitlist for this session")
+    return get_waitlist_position(conn, member_id, session_id)
+
+
+def leave_waitlist(conn, member_id, session_id):
+    entry = repository.get_waitlist_entry(conn, member_id, session_id)
+    if entry is None:
+        raise BookingError("You are not on the waitlist for this session")
+    repository.remove_waitlist_entry(conn, entry["id"])
+    conn.commit()
+
+
+def book_or_join_waitlist(conn, member_id, session_id, now=None):
+    """What the 'Book' button calls: a booking if there is room, else a waitlist spot."""
+    try:
+        booking_id = book_class(conn, member_id, session_id, now=now)
+        return {"status": "confirmed", "booking_id": booking_id}
+    except SessionFullError:
+        position = join_waitlist(conn, member_id, session_id, now=now)
+        return {"status": "waitlisted", "position": position}
+
+
+def cancel_booking(conn, member_id, booking_id, now=None, bus=None):
+    """Free cancellation any time before the session starts (rule 6)."""
+    now = now or datetime.now()
+
+    booking = repository.get_booking(conn, booking_id)
+    if booking is None or booking["member_id"] != member_id:
+        raise BookingError("Booking not found")
+    if booking["status"] != "confirmed":
+        raise BookingError("This booking is already cancelled")
+
+    session = scheduling_client.get_session(booking["session_id"])
+    if session["start_time"] <= now.isoformat(timespec="seconds"):
+        raise BookingError("This session has already started")
+
+    pass_row = dict(repository.get_pass(conn, booking["pass_id"]))
+    strategy = strategies.get_strategy(pass_row["type"])
+    try:
+        # Two changes that must succeed together: cancel the booking + give the credit back
+        repository.set_booking_status(conn, booking_id, "cancelled")
+        repository.set_pass_remaining(
+            conn, pass_row["id"], strategy.remaining_after_refund(pass_row)
+        )
+        conn.commit()
+    except DatabaseError:
+        conn.rollback()
+        raise
+
+    # The cancellation is saved. Now announce it; whoever subscribed reacts.
+    event = events.BookingCancelled(
+        booking_id=booking_id, member_id=member_id, session_id=booking["session_id"]
+    )
+    bus = bus if bus is not None else events.default_bus
+    results = bus.publish(event, conn, now)
+    promoted = next((r for r in results if r), None)  # who got the freed spot, if anyone
+
+    return {
+        "booking_id": booking_id,
+        "member_id": member_id,
+        "session_id": booking["session_id"],
+        "promoted": promoted,
+    }
+
+def promote_next_from_waitlist(conn, session_id, now=None):
+    """Give a free spot to the first waitlisted member who can take it.
+
+    Returns {"member_id", "booking_id", "session_id"}, or None if nobody was promoted.
+    """
+    now = now or datetime.now()
+
+    try:
+        session = _get_open_session(conn, session_id, now)
+    except BookingError:
+        return None  # session was cancelled by the studio, already started, or is gone
+    if repository.count_confirmed_bookings(conn, session_id) >= session["capacity"]:
+        return None  # no free spot
+
+    while True:
+        entry = repository.get_first_waitlist_entry(conn, session_id)
+        if entry is None:
+            return None
+        member_id = entry["member_id"]
+
+        already_booked = repository.get_confirmed_booking(conn, member_id, session_id)
+        pass_row = None if already_booked else find_usable_pass(conn, member_id, now)
+        if already_booked or pass_row is None:
+            # Can't be promoted: take them off the list and try the next person
+            repository.remove_waitlist_entry(conn, entry["id"])
+            conn.commit()
+            continue
+
+        strategy = strategies.get_strategy(pass_row["type"])
+        try:
+            # Three changes that must succeed together
+            repository.remove_waitlist_entry(conn, entry["id"])
+            repository.set_pass_remaining(
+                conn, pass_row["id"], strategy.remaining_after_use(pass_row)
+            )
+            booking_id = repository.add_booking(
+                conn, member_id, session_id, pass_row["id"]
+            )
+            conn.commit()
+        except DatabaseError:
+            conn.rollback()
+            raise
+        return {"member_id": member_id, "booking_id": booking_id, "session_id": session_id}
+
+
+def _on_booking_cancelled(event, conn, now):
+    """Observer: when a booking is cancelled, offer its spot to the waitlist."""
+    return promote_next_from_waitlist(conn, event.session_id, now=now)
+
+
+events.default_bus.subscribe(events.BookingCancelled, _on_booking_cancelled)
+
+
+# helper function to see if the session exists and is still open 
+
+def _get_open_session(conn, session_id, now):
+    """Ask Scheduling (through its service) for a session that can be booked."""
+    try:
+        session = scheduling_client.get_session(session_id)
+    except SessionNotFound:
+        raise BookingError("Session does not exist")
+    if not scheduling_client.is_open_for_booking(session, now=now):
+        raise BookingError("This session is not open for booking")
+    return session
