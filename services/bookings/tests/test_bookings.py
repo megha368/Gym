@@ -2,25 +2,11 @@ from datetime import datetime
 
 import pytest
 
-from database.database import (
-    get_connection,
-    create_scheduling_tables,
-    create_booking_tables,
-)
 from bookings import auth, repository, service, strategies
 from bookings.service import BookingError, SessionFullError
-from scheduling import service as scheduling_service
+from tests import scheduling_stub
 
 NOW = datetime(2026, 10, 7, 12, 0)
-
-
-@pytest.fixture
-def conn():
-    c = get_connection(":memory:")
-    create_scheduling_tables(c)
-    create_booking_tables(c)
-    yield c
-    c.close()
 
 
 def make_member(conn, email="maya@example.com"):
@@ -28,11 +14,7 @@ def make_member(conn, email="maya@example.com"):
 
 
 def make_session(conn, start="2026-10-08T18:00", capacity=5):
-    class_type = scheduling_service.create_class_type(
-        conn, f"Yoga {start} {capacity}"
-    )
-    instructor = scheduling_service.create_instructor(conn, "Sarah")
-    return scheduling_service.create_session(conn, class_type, instructor, start, capacity)
+    return scheduling_stub.add_session(start, capacity, class_name=f"Yoga {start} {capacity}")
 
 
 def pass_row(conn, pass_id):
@@ -181,7 +163,7 @@ def test_cancelled_or_past_session_rejected(conn):
     member_id = make_member(conn)
     service.buy_pass(conn, member_id, "class_pack", now=NOW)
     cancelled = make_session(conn, start="2026-10-09T18:00")
-    scheduling_service.cancel_session(conn, cancelled)
+    scheduling_stub.cancel_session(cancelled)
     past = make_session(conn, start="2026-10-01T18:00")
     with pytest.raises(BookingError):
         service.book_class(conn, member_id, cancelled, now=NOW)

@@ -3,25 +3,11 @@ from datetime import datetime
 
 import pytest
 
-from database.database import (
-    get_connection,
-    create_scheduling_tables,
-    create_booking_tables,
-)
 from bookings import auth, events, repository, service
 from bookings.service import BookingError
-from scheduling import service as scheduling_service
+from tests import scheduling_stub
 
 NOW = datetime(2026, 10, 7, 12, 0)
-
-
-@pytest.fixture
-def conn():
-    c = get_connection(":memory:")
-    create_scheduling_tables(c)
-    create_booking_tables(c)
-    yield c
-    c.close()
 
 
 def make_member(conn, email):
@@ -29,9 +15,7 @@ def make_member(conn, email):
 
 
 def make_session(conn, start="2026-10-08T18:00", capacity=1):
-    class_type = scheduling_service.create_class_type(conn, f"Yoga {start}")
-    instructor = scheduling_service.create_instructor(conn, "Sarah")
-    return scheduling_service.create_session(conn, class_type, instructor, start, capacity)
+    return scheduling_stub.add_session(start, capacity, class_name=f"Yoga {start}")
 
 
 def full_session(conn):
@@ -86,7 +70,7 @@ def test_join_waitlist_rejects_unknown_member_session_and_closed_session(conn):
         service.join_waitlist(conn, 999, session_id, now=NOW)
     with pytest.raises(BookingError):
         service.join_waitlist(conn, member, 999, now=NOW)
-    scheduling_service.cancel_session(conn, session_id)
+    scheduling_stub.cancel_session(session_id)
     with pytest.raises(BookingError):
         service.join_waitlist(conn, member, session_id, now=NOW)
 
@@ -271,7 +255,7 @@ def test_no_promotion_into_a_session_the_studio_cancelled(conn):
     waiting = make_member(conn, "b@example.com")
     service.buy_pass(conn, waiting, "class_pack", now=NOW)
     service.join_waitlist(conn, waiting, session_id, now=NOW)
-    scheduling_service.cancel_session(conn, session_id)
+    scheduling_stub.cancel_session(session_id)
 
     service.cancel_booking(conn, owner, booking_id, now=NOW)
 

@@ -2,19 +2,10 @@ from datetime import datetime
 
 import pytest
 
-from database.database import get_connection, create_scheduling_tables
 from scheduling import service
 from scheduling.service import SchedulingError
 
 NOW = datetime(2026, 10, 7, 12, 0)
-
-
-@pytest.fixture
-def conn():
-    c = get_connection(":memory:")
-    create_scheduling_tables(c)
-    yield c
-    c.close()
 
 
 @pytest.fixture

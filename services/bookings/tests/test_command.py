@@ -2,26 +2,12 @@ from datetime import datetime
 
 import pytest
 
-from database.database import (
-    get_connection,
-    create_scheduling_tables,
-    create_booking_tables,
-)
 from bookings import auth, events, repository, service
 from bookings.commands import BookCommand, CancelCommand, run_command
 from bookings.service import BookingError
-from scheduling import service as scheduling_service
+from tests import scheduling_stub
 
 NOW = datetime(2026, 10, 7, 12, 0)
-
-
-@pytest.fixture
-def conn():
-    c = get_connection(":memory:")
-    create_scheduling_tables(c)
-    create_booking_tables(c)
-    yield c
-    c.close()
 
 
 def make_member(conn, email):
@@ -29,11 +15,7 @@ def make_member(conn, email):
 
 
 def make_session(conn, capacity=1):
-    class_type = scheduling_service.create_class_type(conn, "Yoga")
-    instructor = scheduling_service.create_instructor(conn, "Sarah")
-    return scheduling_service.create_session(
-        conn, class_type, instructor, "2026-10-08T18:00", capacity
-    )
+    return scheduling_stub.add_session("2026-10-08T18:00", capacity)
 
 
 def actions(conn):

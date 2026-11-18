@@ -1,16 +1,7 @@
 import pytest
 
-from database.database import get_connection, create_booking_tables
 from bookings import auth, repository
 from bookings.auth import AuthError
-
-
-@pytest.fixture
-def conn():
-    c = get_connection(":memory:")
-    create_booking_tables(c)
-    yield c
-    c.close()
 
 
 def register_maya(conn, email="maya@example.com", password="secret123"):
