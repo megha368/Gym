@@ -70,11 +70,16 @@ def test_cors_allows_only_the_ui(client):
     assert "Access-Control-Allow-Origin" not in refused.headers
 
 
-def test_seed_fills_an_empty_database_only_once(conn):
+def test_seed_fills_an_empty_database_with_a_week(conn):
     now = datetime(2026, 10, 7, 12, 0)
+    assert seed_demo_data(conn, now=now) == 35  # 5 sessions a day for 7 days
+    assert seed_demo_data(conn, now=now) == 0   # same day again: nothing added
+    assert conn.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()["n"] == 35
+    assert conn.execute("SELECT COUNT(*) AS n FROM class_types").fetchone()["n"] == 5
 
-    assert seed_demo_data(conn, now=now) is True
-    count = conn.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()["n"]
-    assert count == 35
-    assert seed_demo_data(conn, now=now) is False
-    assert conn.execute("SELECT COUNT(*) AS n FROM sessions").fetchone()["n"] == count
+
+def test_seed_tops_up_new_days_later(conn):
+    seed_demo_data(conn, now=datetime(2026, 10, 7, 12, 0))
+    # three days later, the three new days at the end of the week get their sessions
+    assert seed_demo_data(conn, now=datetime(2026, 10, 10, 12, 0)) == 15
+    assert conn.execute("SELECT COUNT(*) AS n FROM class_types").fetchone()["n"] == 5  # no duplicates
