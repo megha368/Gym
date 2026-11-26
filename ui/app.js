@@ -39,9 +39,42 @@ class ApiError extends Error {
   }
 }
 
+// Cold starts on Azure: after a quiet period, the first request starts the container and
+// wakes its database. Until it's ready, Azure itself answers 503 ("App port is not ready")
+// without passing the request to our code, so it is safe to send it again.
+const COLD_START_RETRIES = 6;
+const COLD_START_WAIT_MS = 10000;
+
 // Call a service ("scheduling" or "bookings"). Returns the JSON answer, or throws an
 // ApiError whose message can be shown to the user.
-async function api(service, path, { method = "GET", body } = {}) {
+async function api(service, path, options = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const data = await apiOnce(service, path, options);
+      hideStartingUp();
+      return data;
+    } catch (error) {
+      if (!error.coldStart || attempt >= COLD_START_RETRIES) {
+        hideStartingUp();
+        throw error;
+      }
+      showStartingUp();
+      await new Promise((resolve) => setTimeout(resolve, COLD_START_WAIT_MS));
+    }
+  }
+}
+
+function showStartingUp() {
+  if (document.getElementById("starting-up")) return;
+  document.getElementById("messages").prepend(el("div", { id: "starting-up", class: "flash" },
+    "The system is starting up after a quiet period. This can take up to a minute, please wait…"));
+}
+
+function hideStartingUp() {
+  document.getElementById("starting-up")?.remove();
+}
+
+async function apiOnce(service, path, { method = "GET", body } = {}) {
   const base = service === "scheduling" ? CONFIG.SCHEDULING_URL : CONFIG.BOOKINGS_URL;
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -70,7 +103,12 @@ async function api(service, path, { method = "GET", body } = {}) {
     // empty or non-JSON answer
   }
   if (response.status === 401 && service === "bookings") auth.clear(); // token expired or invalid
-  if (!response.ok) throw new ApiError(data.error || `Request failed (${response.status})`, response.status);
+  if (!response.ok) {
+    const error = new ApiError(data.error || `Request failed (${response.status})`, response.status);
+    // A 503 without our own {"error": ...} body comes from Azure, not from our code: cold start
+    error.coldStart = response.status === 503 && !data.error;
+    throw error;
+  }
   return data;
 }
 

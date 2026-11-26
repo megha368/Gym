@@ -22,19 +22,28 @@ IF SUSER_ID('bookings_user') IS NULL
     CREATE LOGIN bookings_user WITH PASSWORD = '$(BOOKINGS_DB_PASSWORD)';
 GO
 
--- 3. Each login gets a user inside ITS OWN database only, as owner of that database
---    (owner, because its migrations create and change tables). Neither login has a user
---    in the other database, so scheduling_user cannot read bookings' tables, and vice versa.
+-- 3. Each login gets a user inside ITS OWN database only. Neither login has a user in the
+--    other database, so scheduling_user cannot read bookings' tables, and vice versa.
+--    Its roles let it read and write data and run migrations (create and change tables),
+--    and nothing more: the same three roles as on Azure.
 USE scheduling;
 IF USER_ID('scheduling_user') IS NULL
     CREATE USER scheduling_user FOR LOGIN scheduling_user;
-ALTER ROLE db_owner ADD MEMBER scheduling_user;
+ALTER ROLE db_ddladmin ADD MEMBER scheduling_user;
+ALTER ROLE db_datareader ADD MEMBER scheduling_user;
+ALTER ROLE db_datawriter ADD MEMBER scheduling_user;
+IF IS_ROLEMEMBER('db_owner', 'scheduling_user') = 1
+    ALTER ROLE db_owner DROP MEMBER scheduling_user;  -- older versions of this script used db_owner
 GO
 
 USE bookings;
 IF USER_ID('bookings_user') IS NULL
     CREATE USER bookings_user FOR LOGIN bookings_user;
-ALTER ROLE db_owner ADD MEMBER bookings_user;
+ALTER ROLE db_ddladmin ADD MEMBER bookings_user;
+ALTER ROLE db_datareader ADD MEMBER bookings_user;
+ALTER ROLE db_datawriter ADD MEMBER bookings_user;
+IF IS_ROLEMEMBER('db_owner', 'bookings_user') = 1
+    ALTER ROLE db_owner DROP MEMBER bookings_user;
 GO
 
 PRINT 'db/init.sql finished: databases and logins are ready.';

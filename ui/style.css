@@ -28,7 +28,7 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem; }
   .narrow { max-width: 420px; margin: 2rem auto; }
   
-  .flash { padding: .7rem 1rem; border-radius: 8px; margin-bottom: 1rem; }
+  .flash { padding: .7rem 1rem; border-radius: 8px; margin-bottom: 1rem; background: #eef2f7; }
   .flash.success { background: var(--ok-bg); }
   .flash.error { background: var(--err-bg); color: #7a2a22; }
   
