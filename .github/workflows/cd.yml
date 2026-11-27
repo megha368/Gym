@@ -1,0 +1,166 @@
+# CD: runs on every push to main (in practice, every merged pull request).
+#   1. ci:      the whole CI workflow (ci.yml), on this same commit
+#   2. publish: only if CI passed, build both images and push them to GitHub Container
+#               Registry, tagged with the commit SHA
+#   3. deploy:  point both Azure Container Apps at those images, check /health on both,
+#               then upload the UI (with the services' addresses) to the storage website
+#
+# The deploy job signs in to Azure as the managed identity <prefix>-github, with OIDC:
+# GitHub proves to Azure which repository and branch is asking, so no Azure password is
+# stored anywhere. The Azure names come from repository variables, the passwords from
+# repository secrets (see docs/azure-setup.md).
+
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:                   # never two deploys at the same time
+  group: deploy-azure
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Publish ${{ matrix.service }} image
+    needs: ci                  # only if CI passed on this commit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write          # to push to GitHub Container Registry
+    strategy:
+      matrix:
+        service: [scheduling, bookings]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Work out the image name
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/gym-${{ matrix.service }}" >> "$GITHUB_ENV"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push, tagged with the commit SHA
+        uses: docker/build-push-action@v6
+        with:
+          context: services/${{ matrix.service }}
+          build-args: VERSION=${{ github.sha }}
+          push: true
+          provenance: false    # a plain image that Azure can pull (see the setup guide)
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+
+  deploy:
+    name: Deploy to Azure
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write          # lets azure/login ask GitHub for the OIDC token
+    env:
+      PREFIX: ${{ vars.PREFIX }}
+      RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
+      UI_STORAGE: ${{ vars.UI_STORAGE }}
+      SQL_SERVER: ${{ vars.SQL_SERVER }}
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign in to Azure as the pipeline's managed identity (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Work out the image names and the UI's address
+        run: |
+          echo "REGISTRY=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          # The storage website's address is the system's public URL, and the only origin
+          # the services accept (CORS). Azure gives it with a trailing slash; an origin has none.
+          web=$(az storage account show --name "$UI_STORAGE" --resource-group "$RESOURCE_GROUP" \
+                  --query primaryEndpoints.web --output tsv)
+          echo "UI_ORIGIN=${web%/}" >> "$GITHUB_ENV"
+          echo "SQL_HOST=$SQL_SERVER.database.windows.net" >> "$GITHUB_ENV"
+
+      - name: Deploy the scheduling service
+        env:
+          DB_PASSWORD: ${{ secrets.SCHEDULING_DB_PASSWORD }}
+        run: |
+          database_url="mssql://scheduling_user:$DB_PASSWORD@$SQL_HOST:1433/$PREFIX-scheduling-db?encryption=require"
+          fqdn=$(deploy/deploy-containerapp.sh "$PREFIX-scheduling" "$REGISTRY/gym-scheduling:$IMAGE_TAG" \
+            "database-url=$database_url" \
+            -- \
+            "DATABASE_URL=secretref:database-url" "UI_ORIGIN=$UI_ORIGIN" "SEED_DEMO_DATA=1" | tail -n 1)
+          echo "SCHEDULING_URL=https://$fqdn" >> "$GITHUB_ENV"
+
+      - name: Deploy the bookings service
+        env:
+          DB_PASSWORD: ${{ secrets.BOOKINGS_DB_PASSWORD }}
+          SECRET_KEY: ${{ secrets.BOOKINGS_SECRET_KEY }}
+        run: |
+          database_url="mssql://bookings_user:$DB_PASSWORD@$SQL_HOST:1433/$PREFIX-bookings-db?encryption=require"
+          # SCHEDULING_TIMEOUT_S is longer than locally (2 s): on Azure, Scheduling may be
+          # scaled to zero and need several seconds to start (see ADR-8)
+          fqdn=$(deploy/deploy-containerapp.sh "$PREFIX-bookings" "$REGISTRY/gym-bookings:$IMAGE_TAG" \
+            "database-url=$database_url" "secret-key=$SECRET_KEY" \
+            -- \
+            "DATABASE_URL=secretref:database-url" "SECRET_KEY=secretref:secret-key" \
+            "SCHEDULING_URL=$SCHEDULING_URL" "SCHEDULING_TIMEOUT_S=10" "UI_ORIGIN=$UI_ORIGIN" | tail -n 1)
+          echo "BOOKINGS_URL=https://$fqdn" >> "$GITHUB_ENV"
+
+      - name: Check /health on both services (fails the run if not healthy within 5 minutes)
+        run: |
+          # Up to 30 tries, 10 s apart: the first request may have to start the container
+          # and wake the paused database, which takes up to about a minute.
+          # Healthy means status "ok" AND running this commit's version (not the old one).
+          check() {
+            for attempt in $(seq 1 30); do
+              body=$(curl -s --max-time 90 "$1/health" || true)
+              if echo "$body" | jq -e --arg v "$IMAGE_TAG" '.status == "ok" and .version == $v' > /dev/null 2>&1; then
+                echo "$1 is healthy and running $IMAGE_TAG"; return 0
+              fi
+              echo "Waiting for $1 (attempt $attempt): $body"; sleep 10
+            done
+            echo "::error::$1 did not become healthy"; return 1
+          }
+          check "$SCHEDULING_URL"
+          check "$BOOKINGS_URL"
+
+      - name: Point the UI at the deployed services
+        run: |
+          cat > ui/config.js <<EOF
+          // Written by the deploy job: where the services are on Azure
+          window.APP_CONFIG = {
+            SCHEDULING_URL: "$SCHEDULING_URL",
+            BOOKINGS_URL: "$BOOKINGS_URL",
+          };
+          EOF
+          cat ui/config.js
+
+      - name: Upload the UI to the storage static website
+        run: |
+          az storage blob upload-batch --account-name "$UI_STORAGE" --auth-mode key \
+            --destination '$web' --source ui --overwrite --output none
+          echo "UI uploaded to $UI_ORIGIN"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Deployed $IMAGE_TAG"
+            echo "- UI: $UI_ORIGIN"
+            echo "- Scheduling: $SCHEDULING_URL/health"
+            echo "- Bookings: $BOOKINGS_URL/health"
+          } >> "$GITHUB_STEP_SUMMARY"

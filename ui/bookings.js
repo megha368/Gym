@@ -120,6 +120,8 @@ function bookingRow(b) {
   let action;
   if (!b.details_available) {
     action = el("span", { class: "pill" }, "Cancel unavailable");
+  } else if (b.session_status === "cancelled") {
+    action = el("span", { class: "pill full" }, "Class cancelled by the studio");
   } else if (b.can_cancel) {
     action = el("button", {
       class: "btn small danger",

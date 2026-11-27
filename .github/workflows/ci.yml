@@ -1,20 +1,38 @@
-# CI: runs on every push (any branch) and every pull request.
+# CI: runs on every push to a branch other than main, on every pull request, and as the
+# first step of cd.yml for pushes to main (so it never runs twice for the same push).
 #   1. test:        for each service: install, lint, unit tests with coverage (fails under
 #                   70%), and build its Docker image (a failed build fails the run)
 #   2. integration: starts the whole system with docker compose and tests flows across
 #                   the seam, including with Scheduling stopped
-# CD (deploying to Azure from main) is added as a third job that needs both of these.
+#   3. validate:    system.yaml against system.schema.json, each openapi.yaml against the
+#                   OpenAPI specification, and both against the code (tools/validate_system.py)
 #
 # No secret is needed for CI: the tests' SQL Server is a throwaway container whose
 # password is generated randomly for each run. CI never touches Azure SQL.
 
-name: CI/CD
+name: CI
 
 on:
   push:
+    branches-ignore: [main]    # main is handled by cd.yml, which calls this workflow
   pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
+  validate:
+    name: Validate system.yaml and OpenAPI documents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r tools/requirements.txt
+      - run: python tools/validate_system.py
+
   test:
     name: Test ${{ matrix.service }}
     runs-on: ubuntu-latest
@@ -110,3 +128,4 @@ jobs:
       - name: Clean up
         if: always()
         run: docker compose down -v
+

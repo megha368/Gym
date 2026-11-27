@@ -74,5 +74,4 @@ def stub_scheduling(monkeypatch):
 
     scheduling_stub.reset()
     monkeypatch.setattr(scheduling_client, "get_session", scheduling_stub.get_session)
-    monkeypatch.setattr(scheduling_client, "list_upcoming_sessions", scheduling_stub.list_upcoming_sessions)
     return scheduling_stub

@@ -55,12 +55,3 @@ def get_session(session_id):
     if session_id not in sessions:
         raise SessionNotFound("Session does not exist")
     return dict(sessions[session_id])
-
-
-def list_upcoming_sessions(now=None):
-    if down:
-        raise SchedulingUnavailable("stub: Scheduling is down")
-    upcoming = [dict(s) for s in sessions.values() if s["status"] == "scheduled"]
-    if now is not None:
-        upcoming = [s for s in upcoming if s["start_time"] > now.isoformat(timespec="seconds")]
-    return sorted(upcoming, key=lambda s: s["start_time"])

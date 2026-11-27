@@ -39,11 +39,6 @@ def get_session(session_id):
     return _get(f"/sessions/{session_id}")
 
 
-def list_upcoming_sessions(now=None):
-    """Scheduled sessions starting from `now`, soonest first."""
-    now = now or datetime.now()
-    return _get("/sessions", params={"from": now.isoformat(timespec="seconds")})
-
 
 def is_open_for_booking(session, now=None):
     """A session can be booked if it is still scheduled and hasn't started yet."""

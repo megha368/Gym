@@ -2,11 +2,12 @@
 
 The connection string comes from the DATABASE_URL environment variable, in the form
     mssql://<user>:<password>@<host>:<port>/<database>
-(URL-encode any special characters in the password).
+(URL-encode any special characters in the password). On Azure, which only accepts
+encrypted connections, it ends with ?encryption=require.
 """
 
 import time
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import pymssql
 
@@ -54,13 +55,18 @@ def _parse_database_url(url):
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
     parts = urlparse(url)
-    return {
+    settings = {
         "server": parts.hostname,
         "port": parts.port or 1433,
         "user": unquote(parts.username or ""),
         "password": unquote(parts.password or ""),
         "database": parts.path.lstrip("/"),
     }
+    # ?encryption=require (Azure SQL), or off / request; not set means the driver's default
+    encryption = parse_qs(parts.query).get("encryption")
+    if encryption:
+        settings["encryption"] = encryption[0]
+    return settings
 
 
 def get_connection(attempts=REQUEST_ATTEMPTS, url=None):

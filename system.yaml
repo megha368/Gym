@@ -1,0 +1,92 @@
+# yaml-language-server: $schema=./system.schema.json
+#
+# Describes every service in the system: its configuration, its calls across the seam and
+# its Azure resources. Checked in CI against system.schema.json and against the code
+# (tools/validate_system.py).
+
+student: mlal.exstudents2026
+prefix: mlal-exstudents2026
+public_url: https://mlalexstudents2026ui.z1.web.core.windows.net
+
+ui:
+  path: ui/
+  storage_account: mlalexstudents2026ui
+  calls: [scheduling, bookings]
+
+azure:
+  resource_group: rg-mlal-exstudents2026
+  container_apps_environment: mlal-exstudents2026-env
+  sql_server: mlal-exstudents2026-sql-denmarkeast
+  registry: ghcr.io/megha368
+
+services:
+  scheduling:
+    description: Class types, instructors and sessions (the schedule).
+    path: services/scheduling/
+    openapi: services/scheduling/openapi.yaml
+    port_default: 8001
+    health: /health
+    migrations: services/scheduling/migrations
+    env:
+      PORT:
+        default: 8001
+        description: Port the service listens on (the container image sets 8000)
+      DATABASE_URL:
+        secret: true
+        description: "Scheduling's own database: mssql://<user>:<password>@<host>:<port>/<database>, with ?encryption=require on Azure"
+      SEED_DEMO_DATA:
+        default: "1"
+        description: '"1" tops the demo schedule up to a week ahead on every start; anything else turns it off'
+      UI_ORIGIN:
+        default: http://localhost:8080
+        description: The UI's origin, the only one allowed to call this service from a browser (CORS)
+      VERSION:
+        default: dev
+        description: Git commit SHA the image was built from, reported by /health
+    calls: []
+    azure:
+      container_app: mlal-exstudents2026-scheduling
+      sql_database: mlal-exstudents2026-scheduling-db
+
+  bookings:
+    description: Members and login, passes, bookings, the waitlist and the audit log.
+    path: services/bookings/
+    openapi: services/bookings/openapi.yaml
+    port_default: 8000
+    health: /health
+    migrations: services/bookings/migrations
+    env:
+      PORT:
+        default: 8000
+        description: Port the service listens on
+      DATABASE_URL:
+        secret: true
+        description: "Bookings' own database: mssql://<user>:<password>@<host>:<port>/<database>, with ?encryption=require on Azure"
+      SECRET_KEY:
+        secret: true
+        description: Signs the login tokens; anyone who knows it could forge one
+      SCHEDULING_URL:
+        default: http://localhost:8001
+        description: Base URL of the scheduling service (http://scheduling:8000 in compose, its Container App URL on Azure)
+      SCHEDULING_TIMEOUT_S:
+        default: 2
+        description: Seconds to wait for scheduling before giving up (the deploy sets 10 on Azure, for cold starts)
+      UI_ORIGIN:
+        default: http://localhost:8080
+        description: The UI's origin, the only one allowed to call this service from a browser (CORS)
+      VERSION:
+        default: dev
+        description: Git commit SHA the image was built from, reported by /health
+    calls:
+      - service: scheduling
+        url_env: SCHEDULING_URL
+        endpoints: ["GET /sessions/{session_id}"]
+        timeout_s: 2
+        on_failure: >
+          Booking, cancelling and the schedule's details answer 503 "The class schedule is
+          temporarily unavailable, so nothing was changed". The member's bookings and waitlist
+          are still listed, marked "details unavailable", without class name, time or cancel
+          button. Login and passes work as normal.
+    azure:
+      container_app: mlal-exstudents2026-bookings
+      sql_database: mlal-exstudents2026-bookings-db
