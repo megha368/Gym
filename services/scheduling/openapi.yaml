@@ -1,0 +1,91 @@
+openapi: 3.0.3
+info:
+  title: Scheduling service
+  version: "2.0"
+  description: >
+    Class types, instructors and sessions of the gym. Called by the UI (from the browser)
+    and by the Bookings service (GET /sessions/{session_id}).
+    Times are local ISO text without a time zone, like 2026-11-18T19:00:00.
+servers:
+  - url: http://localhost:8001
+    description: docker compose
+paths:
+  /health:
+    get:
+      summary: Is this service running, and can it read and write its own database?
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: The service is running but can't use its database
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+  /sessions:
+    get:
+      summary: Upcoming scheduled sessions, soonest first
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: Only sessions starting at or after this time. Default now.
+          schema: { type: string, example: "2026-11-18T09:00:00" }
+      responses:
+        "200":
+          description: The sessions (cancelled ones are left out)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Session" }
+        "400":
+          description: from is not an ISO date and time
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /sessions/{session_id}:
+    get:
+      summary: One session with its class and instructor names (also cancelled or past ones)
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: The session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "404":
+          description: No session with this id
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+components:
+  schemas:
+    Session:
+      type: object
+      required: [id, class_name, instructor_name, start_time, capacity, status]
+      properties:
+        id: { type: integer, example: 4 }
+        class_name: { type: string, example: Spin }
+        instructor_name: { type: string, example: Diego }
+        start_time: { type: string, example: "2026-11-18T19:00:00" }
+        capacity: { type: integer, minimum: 1, example: 1 }
+        status: { type: string, enum: [scheduled, cancelled] }
+    Health:
+      type: object
+      required: [status, db, version]
+      properties:
+        status: { type: string, enum: [ok, error] }
+        db: { type: string, enum: [ok, error] }
+        version: { type: string, description: The git commit SHA the image was built from, example: dev }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, example: Session does not exist }

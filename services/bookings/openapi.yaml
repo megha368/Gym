@@ -1,0 +1,364 @@
+openapi: 3.0.3
+info:
+  title: Bookings service
+  version: "2.0"
+  description: >
+    Members and login, passes, bookings, the waitlist and the audit log of the gym. Called
+    by the UI from the browser. It calls the Scheduling service for session details
+    (GET /sessions/{session_id}); if Scheduling can't be reached, endpoints that need it
+    answer 503 or list items without their details, as documented below.
+    Endpoints marked with the bearerAuth lock need the token from /auth/register or
+    /auth/login, sent as  Authorization: Bearer <token>.
+servers:
+  - url: http://localhost:8000
+    description: docker compose
+paths:
+  /health:
+    get:
+      summary: Is this service running, and can it read and write its own database? (Does not check Scheduling.)
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: The service is running but can't use its database
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+  /auth/register:
+    post:
+      summary: Create an account; logs the new member in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string, example: Maya }
+                email: { type: string, example: maya@example.com }
+                password: { type: string, minLength: 8, example: secret123 }
+      responses:
+        "201":
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoggedIn" }
+        "400":
+          description: Missing field, password too short, or email already registered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /auth/login:
+    post:
+      summary: Log in and get a token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoggedIn" }
+        "400":
+          description: Invalid email or password
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /me:
+    get:
+      summary: The logged-in member
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The member
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [member]
+                properties:
+                  member: { $ref: "#/components/schemas/Member" }
+        "401": { $ref: "#/components/responses/NotLoggedIn" }
+  /availability:
+    get:
+      summary: Spots taken per session, and the member's status in each (Bookings' half of the schedule)
+      description: Login optional. Without a valid token, member_status is always null.
+      parameters:
+        - name: session_ids
+          in: query
+          required: true
+          description: Comma-separated session ids, at most 200
+          schema: { type: string, example: "3,4,5" }
+      responses:
+        "200":
+          description: One entry per requested session id
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: object
+                    description: Keyed by session id (as text)
+                    additionalProperties: { $ref: "#/components/schemas/Availability" }
+        "400":
+          description: session_ids is not a list of numbers, or has more than 200
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /bookings:
+    get:
+      summary: The member's upcoming bookings and waitlist entries, with class details from Scheduling
+      description: >
+        If Scheduling can't be reached, the bookings and waitlist entries are still listed
+        (they are Bookings' own data) with details_available false and no class name or
+        time, and details_missing is true.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Bookings and waitlist
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bookings, waitlist, details_missing]
+                properties:
+                  bookings:
+                    type: array
+                    items: { $ref: "#/components/schemas/Booking" }
+                  waitlist:
+                    type: array
+                    items: { $ref: "#/components/schemas/WaitlistEntry" }
+                  details_missing: { type: boolean }
+        "401": { $ref: "#/components/responses/NotLoggedIn" }
+    post:
+      summary: Book a session, or join its waitlist if it is full
+      description: Crosses the seam. Asks Scheduling whether the session exists, is open and its capacity.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [session_id]
+              properties:
+                session_id: { type: integer, example: 4 }
+      responses:
+        "201":
+          description: Booked (status confirmed) or put on the waitlist (status waitlisted)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: object
+                    required: [status, booking_id]
+                    properties:
+                      status: { type: string, enum: [confirmed] }
+                      booking_id: { type: integer }
+                  - type: object
+                    required: [status, position]
+                    properties:
+                      status: { type: string, enum: [waitlisted] }
+                      position: { type: integer, minimum: 1 }
+        "400":
+          description: Unknown or closed session, no valid pass, already booked or waitlisted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/NotLoggedIn" }
+        "503": { $ref: "#/components/responses/SchedulingUnavailable" }
+  /bookings/{booking_id}/cancel:
+    post:
+      summary: Cancel one of the member's bookings; promotes the first member on the waitlist
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: booking_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [booking_id, promoted]
+                properties:
+                  booking_id: { type: integer }
+                  promoted: { type: boolean, description: True if someone on the waitlist got the spot }
+        "400":
+          description: Not found, not the member's booking, already cancelled, or the class has started
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/NotLoggedIn" }
+        "503": { $ref: "#/components/responses/SchedulingUnavailable" }
+  /waitlist/{session_id}:
+    delete:
+      summary: Leave the waitlist of a session
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Left the waitlist
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [session_id, left]
+                properties:
+                  session_id: { type: integer }
+                  left: { type: boolean }
+        "400":
+          description: The member is not on this waitlist
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/NotLoggedIn" }
+  /passes:
+    get:
+      summary: The member's passes
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: The member's passes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [passes]
+                properties:
+                  passes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Pass" }
+        "401": { $ref: "#/components/responses/NotLoggedIn" }
+    post:
+      summary: Add a pass to the member's account (demo, no payment)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pass_type]
+              properties:
+                pass_type: { type: string, enum: [drop_in, class_pack, membership] }
+      responses:
+        "201":
+          description: Pass added
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pass_id]
+                properties:
+                  pass_id: { type: integer }
+        "400":
+          description: Unknown pass type
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/NotLoggedIn" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Signed login token from /auth/register or /auth/login, valid for 7 days
+  responses:
+    NotLoggedIn:
+      description: No token, or an invalid or expired one
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    SchedulingUnavailable:
+      description: The Scheduling service can't be reached; nothing was changed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Member:
+      type: object
+      required: [id, name, email]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+    LoggedIn:
+      type: object
+      required: [token, member]
+      properties:
+        token: { type: string }
+        member: { $ref: "#/components/schemas/Member" }
+    Availability:
+      type: object
+      required: [booked, member_status, waitlist_position]
+      properties:
+        booked: { type: integer, description: Confirmed bookings for the session }
+        member_status: { type: string, enum: [booked, waitlisted], nullable: true }
+        waitlist_position: { type: integer, nullable: true }
+    Booking:
+      type: object
+      required: [booking_id, session_id, details_available, class_name, instructor_name, start_time, session_status, can_cancel]
+      properties:
+        booking_id: { type: integer }
+        session_id: { type: integer }
+        details_available: { type: boolean, description: False if Scheduling couldn't be reached or no longer has the session }
+        class_name: { type: string, nullable: true }
+        instructor_name: { type: string, nullable: true }
+        start_time: { type: string, nullable: true, example: "2026-11-18T19:00:00" }
+        session_status: { type: string, enum: [scheduled, cancelled], nullable: true }
+        can_cancel: { type: boolean }
+    WaitlistEntry:
+      type: object
+      required: [session_id, details_available, class_name, instructor_name, start_time, position]
+      properties:
+        session_id: { type: integer }
+        details_available: { type: boolean }
+        class_name: { type: string, nullable: true }
+        instructor_name: { type: string, nullable: true }
+        start_time: { type: string, nullable: true }
+        position: { type: integer, minimum: 1 }
+    Pass:
+      type: object
+      required: [id, member_id, type, remaining_uses, expires_at, created_at, is_valid]
+      properties:
+        id: { type: integer }
+        member_id: { type: integer }
+        type: { type: string, enum: [drop_in, class_pack, membership] }
+        remaining_uses: { type: integer, nullable: true, description: null means unlimited }
+        expires_at: { type: string, nullable: true, description: null means it never expires }
+        created_at: { type: string, description: "As sent by Flask, e.g. Thu, 26 Nov 2026 12:00:00 GMT" }
+        is_valid: { type: boolean }
+    Health:
+      type: object
+      required: [status, db, version]
+      properties:
+        status: { type: string, enum: [ok, error] }
+        db: { type: string, enum: [ok, error] }
+        version: { type: string, description: The git commit SHA the image was built from }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }

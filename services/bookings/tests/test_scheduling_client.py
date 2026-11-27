@@ -34,14 +34,12 @@ def calls(monkeypatch):
         return recorded.answer
 
     monkeypatch.setattr(scheduling_client.requests, "get", fake_get)
-    # the conftest stub replaces these two functions; put the real ones back for these tests
+    # the conftest stub replaces get_session; put the real one back for these tests
     monkeypatch.setattr(scheduling_client, "get_session", REAL_GET_SESSION)
-    monkeypatch.setattr(scheduling_client, "list_upcoming_sessions", REAL_LIST_UPCOMING)
     return recorded
 
 
 REAL_GET_SESSION = scheduling_client.get_session
-REAL_LIST_UPCOMING = scheduling_client.list_upcoming_sessions
 
 
 def test_get_session_calls_the_right_url_with_a_timeout(calls):
@@ -49,12 +47,6 @@ def test_get_session_calls_the_right_url_with_a_timeout(calls):
     assert scheduling_client.get_session(7) == {"id": 7, "class_name": "Spin"}
     assert calls[0]["url"].endswith("/sessions/7")
     assert calls[0]["timeout"] == scheduling_client.SCHEDULING_TIMEOUT_S
-
-
-def test_list_upcoming_sends_the_time(calls):
-    calls.answer = FakeResponse(200, [])
-    scheduling_client.list_upcoming_sessions(now=datetime(2026, 11, 18, 9, 0))
-    assert calls[0]["params"] == {"from": "2026-11-18T09:00:00"}
 
 
 def test_404_means_session_not_found(calls):
