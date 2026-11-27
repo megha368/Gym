@@ -73,6 +73,7 @@ jobs:
       PREFIX: ${{ vars.PREFIX }}
       RESOURCE_GROUP: ${{ vars.RESOURCE_GROUP }}
       UI_STORAGE: ${{ vars.UI_STORAGE }}
+      SQL_SERVER: ${{ vars.SQL_SERVER }}
       IMAGE_TAG: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +93,7 @@ jobs:
           web=$(az storage account show --name "$UI_STORAGE" --resource-group "$RESOURCE_GROUP" \
                   --query primaryEndpoints.web --output tsv)
           echo "UI_ORIGIN=${web%/}" >> "$GITHUB_ENV"
-          echo "SQL_HOST=$PREFIX-sql.database.windows.net" >> "$GITHUB_ENV"
+          echo "SQL_HOST=$SQL_SERVER.database.windows.net" >> "$GITHUB_ENV"
 
       - name: Deploy the scheduling service
         env:

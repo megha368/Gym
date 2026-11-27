@@ -16,7 +16,7 @@ ui:
 azure:
   resource_group: rg-mlal-exstudents2026
   container_apps_environment: mlal-exstudents2026-env
-  sql_server: mlal-exstudents2026-sql
+  sql_server: mlal-exstudents2026-sql-denmarkeast
   registry: ghcr.io/megha368
 
 services:

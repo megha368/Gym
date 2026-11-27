@@ -13,9 +13,9 @@ resource group rg-<prefix>
  │     ├─ Container App <prefix>-scheduling
  │     └─ Container App <prefix>-bookings
  ├─ Log Analytics workspace                       the containers' logs (created with the environment)
- └─ SQL server <prefix>-sql
-       ├─ database <prefix>-scheduling-db         serverless, free offer
-       └─ database <prefix>-bookings-db           serverless, free offer
+ └─ SQL server <prefix>-sql-denmarkeast (see step 4 for why this name)
+       ├─ database <prefix>-scheduling-db         serverless, 60-minute auto-pause
+       └─ database <prefix>-bookings-db           serverless, 60-minute auto-pause
 ```
 
 ## 0. Where to run the commands
@@ -73,6 +73,13 @@ is taken, add a digit to `UI_STORAGE` and repeat.
 
 ## 4. SQL server, two serverless databases, one user per database
 
+Note: creating the server failed with `RegionDoesNotAllowProvisioning` in switzerlandnorth,
+germanywestcentral, polandcentral and norwayeast ("not accepting creation of new ... SQL
+Database servers at this time"), and each failed attempt left its name reserved in the region
+that refused it. So each region was tried with its own name, `<prefix>-sql-<region>`, and the
+server is `<prefix>-sql-denmarkeast`, in denmarkeast. The rest of the system is in
+switzerlandnorth; the services reach the database by name, so the region makes no difference.
+
 Choose three passwords (letters, digits and `_` only, since they go inside connection URLs; at
 least 12 characters with upper case, lower case and digits) and keep them in a password manager.
 The admin password is never stored anywhere else.
@@ -82,24 +89,31 @@ SQL_ADMIN=gymadmin
 SQL_ADMIN_PASSWORD='...'
 SCHEDULING_DB_PASSWORD='...'
 BOOKINGS_DB_PASSWORD='...'
-SQL_LOCATION=$LOCATION   # if the free offer isn't available there, another region from my list
+SQL_LOCATION=denmarkeast              # the only region of my list accepting new SQL servers
+SQL_SERVER=$PREFIX-sql-$SQL_LOCATION  # see the note above
 
-az sql server create --name $PREFIX-sql --resource-group $RG --location $SQL_LOCATION \
+az sql server create --name $SQL_SERVER --resource-group $RG --location $SQL_LOCATION \
   --admin-user $SQL_ADMIN --admin-password "$SQL_ADMIN_PASSWORD"
 
 # Allow Azure services (the Container Apps). 0.0.0.0 here is Azure's special rule, not "everyone".
-az sql server firewall-rule create --resource-group $RG --server $PREFIX-sql \
+az sql server firewall-rule create --resource-group $RG --server $SQL_SERVER \
   --name AllowAzureServices --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0
 
-# Free offer: it fixes the auto-pause delay (60 min) and the size, so neither is passed here.
+# denmarkeast doesn't support the free offer ("Provisioning of free limit database is not
+# supported ... for region"), so: serverless without it, pausing after 60 minutes, 2 GB
+# (15 minutes is refused for this size: "does not support auto pause delay value 15").
+# It only charges while awake, plus storage; paid from the Azure for Students credit.
 for service in scheduling bookings; do
-  az sql db create --resource-group $RG --server $PREFIX-sql --name $PREFIX-$service-db \
+  az sql db create --resource-group $RG --server $SQL_SERVER --name $PREFIX-$service-db \
     --edition GeneralPurpose --compute-model Serverless --family Gen5 \
     --min-capacity 0.5 --capacity 1 \
-    --backup-storage-redundancy Local \
-    --use-free-limit true --free-limit-exhaustion-behavior AutoPause
+    --auto-pause-delay 60 --max-size 2GB \
+    --backup-storage-redundancy Local
 done
 ```
+
+(Where the free offer is available, use `--use-free-limit true --free-limit-exhaustion-behavior
+AutoPause` instead of `--auto-pause-delay` and `--max-size`, which the free offer fixes.)
 
 One *contained* user per database: it exists only inside its own database, so it can't reach
 the other one. Its roles let it read, write and run migrations (create and change tables).
@@ -107,24 +121,24 @@ For this, the firewall is opened to Cloud Shell's address, then closed again:
 
 ```bash
 MY_IP=$(curl -s https://api.ipify.org)
-az sql server firewall-rule create --resource-group $RG --server $PREFIX-sql \
+az sql server firewall-rule create --resource-group $RG --server $SQL_SERVER \
   --name setup-temporary --start-ip-address $MY_IP --end-ip-address $MY_IP
 
-sqlcmd -S tcp:$PREFIX-sql.database.windows.net,1433 -d $PREFIX-scheduling-db \
+sqlcmd -S tcp:$SQL_SERVER.database.windows.net,1433 -d $PREFIX-scheduling-db \
   -U $SQL_ADMIN -P "$SQL_ADMIN_PASSWORD" -l 60 -Q "
   CREATE USER scheduling_user WITH PASSWORD = '$SCHEDULING_DB_PASSWORD';
   ALTER ROLE db_ddladmin ADD MEMBER scheduling_user;
   ALTER ROLE db_datareader ADD MEMBER scheduling_user;
   ALTER ROLE db_datawriter ADD MEMBER scheduling_user;"
 
-sqlcmd -S tcp:$PREFIX-sql.database.windows.net,1433 -d $PREFIX-bookings-db \
+sqlcmd -S tcp:$SQL_SERVER.database.windows.net,1433 -d $PREFIX-bookings-db \
   -U $SQL_ADMIN -P "$SQL_ADMIN_PASSWORD" -l 60 -Q "
   CREATE USER bookings_user WITH PASSWORD = '$BOOKINGS_DB_PASSWORD';
   ALTER ROLE db_ddladmin ADD MEMBER bookings_user;
   ALTER ROLE db_datareader ADD MEMBER bookings_user;
   ALTER ROLE db_datawriter ADD MEMBER bookings_user;"
 
-az sql server firewall-rule delete --resource-group $RG --server $PREFIX-sql --name setup-temporary
+az sql server firewall-rule delete --resource-group $RG --server $SQL_SERVER --name setup-temporary
 ```
 
 ## 5. Container Apps
@@ -194,13 +208,14 @@ In the repository: **Settings** → **Secrets and variables** → **Actions**.
 | `BOOKINGS_DB_PASSWORD` | bookings_user's password from step 4 |
 | `BOOKINGS_SECRET_KEY` | a long random string: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` |
 
-**Variables** tab, **New repository variable**, three of them (not secret):
+**Variables** tab, **New repository variable**, four of them (not secret):
 
 | Name | Value |
 |---|---|
 | `PREFIX` | my prefix, e.g. `jsmith-ieu2023` |
 | `RESOURCE_GROUP` | `rg-<prefix>` |
 | `UI_STORAGE` | the storage account name from step 3 |
+| `SQL_SERVER` | the SQL server's name from step 4, without `.database.windows.net` |
 
 No password is ever written in a file in the repository: `cd.yml` builds each database URL
 from these at deploy time.
