@@ -127,3 +127,51 @@ Alembic, rejected because I don't use SQLAlchemy and my own runner is short enou
 
 Consequences:
 Each service can change its own tables without touching the other, but the database no longer stops a booking for a session that doesn't exist, so my code and tests have to. Running migrations at startup is only safe because each service runs as one container with one worker.
+
+
+8. Serverless hosting on Azure
+
+Date: 2026-11-27
+
+Status: Decided
+
+Context:
+The system has to run in my Azure for Students subscription ($100 of credit, no card) and cost almost nothing when nobody uses it, so everything has to scale to zero.
+
+Decision:
+Each service runs as an Azure Container App on the Consumption plan with 0.25 vCPU, 0.5 GiB, minimum 0 and maximum 1 replica. Each has its own serverless Azure SQL database (0.5 to 1 vCore) on the free offer, which pauses after 60 minutes without use. The UI is a Storage static website, images are in GitHub Container Registry (free, so no Azure Container Registry), logs go to the Log Analytics workspace the Container Apps environment creates, and the pipeline signs in as a managed identity with OIDC, so no Azure password is stored. The cost model is pay-per-use: Container Apps only charge while a replica is running, a paused database charges nothing for compute, and the storage and logs cost cents. The SQL server is in [REGION] instead of switzerlandnorth like everything else, because switzerlandnorth and germanywestcentral weren't accepting new SQL servers.
+
+Scale-to-zero has consequences. The first request after a quiet period has to start the container and may also find the database paused, which takes about a minute to resume. Meanwhile Azure answers 503 "App port is not ready", so the UI waits and retries with a "starting up" message. The services connect with retries and backoff (about 45 seconds at startup, a few seconds per request), gunicorn's timeout is 120 seconds so startup isn't killed while it waits, and Bookings waits 10 seconds for Scheduling on Azure instead of 2 because Scheduling may be asleep too. Migrations run at startup, which is only safe because there is at most one replica with one gunicorn worker, so they can never run twice at once. The deploy's health check waits up to 5 minutes for this.
+
+At 100x traffic I would keep at least one replica running (no cold starts) and allow several, move migrations out of startup into a separate pipeline step so replicas can't race, move the databases off the free offer to more vCores, and add a batch endpoint in Scheduling so listing bookings doesn't make one call per booking.
+
+Alternatives considered:
+Always-on hosting (App Service or a VM), rejected because it charges even when idle and is out of scope. Bicep or Terraform instead of az commands, rejected because the setup is small and I can explain each command, but it would be worth it for a second environment.
+
+Consequences:
+Idle, the system costs close to nothing, but the first user after a quiet period waits up to about a minute. The single replica means no scaling under load and a few seconds of downtime during each deploy.
+
+
+
+
+9. Pipeline and testing
+
+Date: 2026-11-27
+
+Status: Decided
+
+Context:
+Changes reach main only through pull requests, and every push to main deploys, so CI has to catch problems before they reach Azure.
+
+Decision:
+CI (ci.yml) runs on every branch push and pull request, and gates on: ruff lint, unit tests for each service against a real SQL Server container with at least 70% coverage of the core logic, building both Docker images, an integration test of the whole system in docker compose, and checking system.yaml and the OpenAPI documents against their schemas and against the code. CD (cd.yml) runs on main only: it runs the same CI first, then pushes the images tagged with the commit SHA, deploys them, and fails unless both /health endpoints report that SHA within 5 minutes. The test database password is generated for each run, so CI needs no secrets.
+
+The cross-seam test works on two levels. In Bookings' unit tests, Scheduling is replaced by a stub (tests/scheduling_stub.py) that answers from a dictionary and can pretend to be down, because it keeps the tests fast and lets me test the "Scheduling is down" cases on purpose. The real HTTP client is tested separately with fake responses (timeout, connection refused, 404, 500). The integration test then runs both real services in compose and books a class over HTTP, and it runs again with Scheduling stopped to check that Bookings degrades instead of failing.
+
+Deliberately not tested: the UI's JavaScript (I tested it by hand), behaviour that only exists on Azure (cold starts, encrypted connections), which the deploy's health check covers, two members booking the last spot at the same moment, and performance.
+
+Alternatives considered:
+Testing against SQLite, rejected because SQL Server's SQL is different and it would hide real bugs. A contract-testing tool like Pact, rejected as too much for two services, since the OpenAPI checks and the integration test already cover the contract.
+
+Consequences:
+A broken build, failing test or wrong system.yaml can't reach Azure. CI takes about 10 minutes because it starts SQL Server several times, and a bug only in the UI or only on Azure can still get through.
